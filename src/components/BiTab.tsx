@@ -10,14 +10,15 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  ComposedChart,
   Legend,
   Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { GRID, SERIES, SURFACE, axisTick, tooltipValue } from "@/lib/chart-theme";
 import type { FeatureCollection } from "geojson";
 import type { LatLngBounds, Map as LeafletMap, Path as LeafletPath } from "leaflet";
 import {
@@ -32,6 +33,7 @@ import {
   measureLabel,
   measureValue,
   totalsOf,
+  UNASSIGNED_DIVISION,
   upazilaMatchKey,
   type MeasureKey,
   type MisDataset,
@@ -71,7 +73,10 @@ const GEO_LEVELS: Record<GeoLevel, { url: string; nameProp: string; parentProp: 
 
 const MAP_METRICS: MeasureKey[] = ["api", "tpr", "aber", "cases", "tests", "deaths"];
 const KPI_METRICS: MeasureKey[] = ["cases", "tests", "tpr", "api", "aber", "deaths", "pfShare"];
-const PALETTE = ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"];
+// Light yellow → red; only the top class is red.
+const PALETTE = ["#fef9c3", "#fde68a", "#fbbf24", "#f97316", "#dc2626"];
+// Case map classes: 0 · 1–9 · 10–49 · 50–99 · ≥100 (red is reserved for 100+ cases).
+const CASE_BREAKS = [0, 9, 49, 99];
 const NO_DATA = "#e2e8f0";
 const LAYOUT_KEY = "malaria-mis:bi-layouts:v1";
 
@@ -161,15 +166,22 @@ function Widget({ title, actions, children }: { title: string; actions?: ReactNo
 }
 
 function MapLegend({ breaks, metric }: { breaks: number[]; metric: MeasureKey }) {
+  const counts = !isIndicator(metric) && breaks.every(Number.isInteger);
+  const f = (v: number) => LEGEND_FMT.format(v);
   const items = Array.from({ length: breaks.length ? breaks.length + 1 : 0 }, (_, i) => {
     const lo = i === 0 ? null : breaks[i - 1];
     const hi = i < breaks.length ? breaks[i] : null;
-    const text =
-      lo === null
-        ? `≤ ${LEGEND_FMT.format(hi ?? 0)}`
+    const text = counts
+      ? lo === null
+        ? hi === 0 ? "0" : `≤ ${f(hi ?? 0)}`
         : hi === null
-          ? `> ${LEGEND_FMT.format(lo)}`
-          : `${LEGEND_FMT.format(lo)} – ${LEGEND_FMT.format(hi)}`;
+          ? `≥ ${f(lo + 1)}`
+          : lo + 1 === hi ? f(hi) : `${f(lo + 1)} – ${f(hi)}`
+      : lo === null
+        ? `≤ ${f(hi ?? 0)}`
+        : hi === null
+          ? `> ${f(lo)}`
+          : `${f(lo)} – ${f(hi)}`;
     return { color: paletteAt(i, breaks.length), text };
   });
   return (
@@ -182,6 +194,57 @@ function MapLegend({ breaks, metric }: { breaks: number[]; metric: MeasureKey })
         </div>
       ))}
     </div>
+  );
+}
+
+/** Explicit Division → District → Upazila drill controls (map clicks do the same). */
+function GeoPicker({
+  options,
+  geo,
+  onChange,
+}: {
+  options: { divisions: GeoPick[]; districts: Map<string, GeoPick[]> };
+  geo: GeoSelection;
+  onChange: (next: GeoSelection) => void;
+}) {
+  const districts = geo.division ? (options.districts.get(geo.division.key) ?? []) : [];
+  const select = "max-w-32 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs";
+  return (
+    <>
+      <select
+        aria-label="Division"
+        value={geo.division?.key ?? ""}
+        onChange={(e) => onChange({ division: options.divisions.find((d) => d.key === e.target.value) ?? null, district: null })}
+        className={select}
+      >
+        <option value="">All divisions</option>
+        {options.divisions.map((d) => (
+          <option key={d.key} value={d.key}>{d.label}</option>
+        ))}
+      </select>
+      <select
+        aria-label="District"
+        disabled={!geo.division}
+        value={geo.district?.key ?? ""}
+        onChange={(e) => onChange({ division: geo.division, district: districts.find((d) => d.key === e.target.value) ?? null })}
+        className={`${select} disabled:opacity-50`}
+      >
+        <option value="">{geo.division ? "All districts" : "District…"}</option>
+        {districts.map((d) => (
+          <option key={d.key} value={d.key}>{d.label}</option>
+        ))}
+      </select>
+      {geo.division && (
+        <button
+          type="button"
+          onClick={() => onChange(geo.district ? { division: geo.division, district: null } : { division: null, district: null })}
+          className="rounded border border-slate-300 px-1.5 py-0.5 text-xs hover:bg-slate-50"
+          title="Go up one level"
+        >
+          ↑ Up
+        </button>
+      )}
+    </>
   );
 }
 
@@ -361,8 +424,8 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
   const years = useMemo(() => [...new Set(records.map((r) => r.year))].sort((a, b) => a - b), [records]);
 
   const [geo, setGeo] = useState<GeoSelection>({ division: null, district: null });
-  const [year, setYear] = useState<number | "all">("all");
-  const [metric, setMetric] = useState<MeasureKey>("tpr");
+  const [year, setYear] = useState<number | "all">(() => years.at(-1) ?? "all");
+  const [metric, setMetric] = useState<MeasureKey>("cases");
   const [layouts, setLayouts] = useState<ResponsiveLayouts>(readStoredLayouts);
   const { width, containerRef, mounted } = useContainerWidth();
 
@@ -395,9 +458,29 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
   }, [scoped, level, metric]);
 
   const breaks = useMemo(
-    () => quantileBreaks([...areaStats.values()].map((s) => s.value).filter((v): v is number => v !== null)),
-    [areaStats],
+    () =>
+      metric === "cases"
+        ? CASE_BREAKS
+        : quantileBreaks([...areaStats.values()].map((s) => s.value).filter((v): v is number => v !== null)),
+    [areaStats, metric],
   );
+
+  const geoOptions = useMemo(() => {
+    const divisions = new Map<string, GeoPick>();
+    const districts = new Map<string, Map<string, GeoPick>>();
+    for (const r of records) {
+      if (r.divisionName === UNASSIGNED_DIVISION) continue;
+      divisions.set(r.divisionKey, { key: r.divisionKey, label: r.divisionName });
+      let inDivision = districts.get(r.divisionKey);
+      if (!inDivision) districts.set(r.divisionKey, (inDivision = new Map()));
+      inDivision.set(r.districtKey, { key: r.districtKey, label: r.districtName });
+    }
+    const byLabel = (a: GeoPick, b: GeoPick) => a.label.localeCompare(b.label);
+    return {
+      divisions: [...divisions.values()].sort(byLabel),
+      districts: new Map([...districts].map(([k, m]) => [k, [...m.values()].sort(byLabel)])),
+    };
+  }, [records]);
 
   const trend = useMemo(
     () =>
@@ -558,26 +641,40 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
             </div>
 
             <div key="trend">
-              <Widget title="Monthly confirmed cases, testing & TPR">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={trend} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="period" tick={{ fontSize: 11 }} minTickGap={24} />
-                    <YAxis yAxisId="cases" tick={{ fontSize: 11 }} width={56} />
-                    <YAxis yAxisId="tests" hide />
-                    <YAxis yAxisId="rate" orientation="right" tick={{ fontSize: 11 }} width={44} unit="%" />
-                    <Tooltip />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar yAxisId="cases" dataKey="cases" name="Confirmed cases" fill="#dc2626" />
-                    <Line yAxisId="tests" dataKey="tests" name="Tested" stroke="#2563eb" dot={false} strokeWidth={1.5} />
-                    <Line yAxisId="rate" dataKey="tpr" name="TPR %" stroke="#0f766e" dot={false} strokeWidth={2} />
-                  </ComposedChart>
-                </ResponsiveContainer>
+              <Widget title="Monthly confirmed cases and test positivity">
+                {/* Two aligned panels instead of a dual-axis chart. */}
+                <div className="flex h-full flex-col gap-1">
+                  <div className="min-h-0 flex-[3]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={trend} syncId="bi-trend" margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                        <CartesianGrid vertical={false} stroke={GRID} />
+                        <XAxis dataKey="period" tick={axisTick} minTickGap={24} hide />
+                        <YAxis tick={axisTick} width={48} />
+                        <Tooltip formatter={tooltipValue} />
+                        <Bar dataKey="cases" name="Confirmed cases" fill={SERIES[0]} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="min-h-0 flex-[2]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trend} syncId="bi-trend" margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                        <CartesianGrid vertical={false} stroke={GRID} />
+                        <XAxis dataKey="period" tick={axisTick} minTickGap={24} />
+                        <YAxis tick={axisTick} width={48} unit="%" />
+                        <Tooltip formatter={tooltipValue} />
+                        <Line dataKey="tpr" name="Test positivity %" stroke={SERIES[1]} dot={false} strokeWidth={2} isAnimationActive={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </Widget>
             </div>
 
             <div key="map">
-              <Widget title={`GIS — ${GEO_LEVELS[level].label} of ${scopeLabel}`}>
+              <Widget
+                title={`GIS — ${GEO_LEVELS[level].label} of ${scopeLabel}`}
+                actions={<GeoPicker options={geoOptions} geo={geo} onChange={setGeo} />}
+              >
                 <ChoroplethMap
                   level={level}
                   parentKey={geo.district?.key ?? geo.division?.key ?? null}
@@ -593,14 +690,14 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
               <Widget title="Species composition by year">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={species} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} width={56} />
-                    <Tooltip />
+                    <CartesianGrid vertical={false} stroke={GRID} />
+                    <XAxis dataKey="year" tick={axisTick} />
+                    <YAxis tick={axisTick} width={48} />
+                    <Tooltip formatter={tooltipValue} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="pf" name="P. falciparum" stackId="s" fill="#b91c1c" />
-                    <Bar dataKey="pv" name="P. vivax" stackId="s" fill="#f59e0b" />
-                    <Bar dataKey="mixed" name="Mixed" stackId="s" fill="#7c3aed" />
+                    <Bar dataKey="pf" name="P. falciparum" stackId="s" fill={SERIES[0]} stroke={SURFACE} strokeWidth={1} isAnimationActive={false} />
+                    <Bar dataKey="pv" name="P. vivax" stackId="s" fill={SERIES[1]} stroke={SURFACE} strokeWidth={1} isAnimationActive={false} />
+                    <Bar dataKey="mixed" name="Mixed" stackId="s" fill={SERIES[2]} stroke={SURFACE} strokeWidth={1} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               </Widget>

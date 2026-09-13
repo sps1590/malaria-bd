@@ -1,0 +1,48 @@
+name: Daily weather & forecast pipeline
+
+on:
+  schedule:
+    - cron: "30 3 * * *" # 09:30 BST, 30 minutes after the Vercel MIS sync
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::Add a DATABASE_URL repository secret (Settings → Secrets and variables → Actions) to run the pipeline."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.ready == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install dependencies
+        if: steps.config.outputs.ready == 'true'
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Refresh ERA5 weather
+        if: steps.config.outputs.ready == 'true'
+        working-directory: pipeline
+        run: python era5.py
+
+      - name: Retrain forecasts
+        if: steps.config.outputs.ready == 'true'
+        working-directory: pipeline
+        run: python forecast.py

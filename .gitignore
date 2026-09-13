@@ -46,3 +46,7 @@ data/geo-src/
 
 # editor/agent local config
 .claude/
+!.env.example
+
+# python
+__pycache__/

@@ -1,0 +1,43 @@
+{
+  "names": {
+    "chittagong": "chattogram",
+    "comilla": "cumilla",
+    "kumilla": "cumilla",
+    "barisal": "barishal",
+    "rajshani": "rajshahi",
+    "brahamanbaria": "brahmanbaria",
+    "jessore": "jashore",
+    "bogra": "bogura",
+    "hobigonj": "habiganj",
+    "hobiganj": "habiganj",
+    "laksmipur": "lakshmipur",
+    "laxmipur": "lakshmipur",
+    "perojpur": "pirojpur",
+    "narayangnj": "narayanganj",
+    "norshingdi": "narsingdi",
+    "narshingdi": "narsingdi",
+    "serajganj": "sirajganj",
+    "jhalokathi": "jhalokati",
+    "jhalakathi": "jhalokati",
+    "maulvibazar": "moulvibazar",
+    "khagrachari": "khagrachhari",
+    "netrakona": "netrokona",
+    "nawabganj": "chapainawabganj",
+    "chapainababganj": "chapainawabganj",
+    "jhenaidaha": "jhenaidah",
+    "kishorganj": "kishoreganj",
+    "munshigonj": "munshiganj"
+  },
+  "upazila": {
+    "rajibpur": "charrajibpur",
+    "bishwarmvarpur": "bishwambarpur",
+    "habigang": "habiganj",
+    "jessore": "kotwali",
+    "cumilla": "comillaadarsha",
+    "tetulia": "tentulia",
+    "ghorahat": "ghoraghat",
+    "kathalia": "kanthalia",
+    "zajira": "zanjira",
+    "dhubchanchia": "dhupchanchia"
+  }
+}

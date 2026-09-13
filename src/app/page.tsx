@@ -1,22 +1,34 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import postgres from "postgres";
+import AlertsTab from "@/components/AlertsTab";
+import AnalystChat from "@/components/AnalystChat";
 import BiTab from "@/components/BiTab";
+import EpiTab from "@/components/EpiTab";
+import ForecastTab from "@/components/ForecastTab";
+import OverviewTab from "@/components/OverviewTab";
 import PivotTab from "@/components/PivotTab";
+import { getSql } from "@/lib/db";
 import { NUMERIC_FIELDS, type AreaTuple, type MisDataset, type RowTuple } from "@/lib/malaria-metrics";
 
 export const metadata: Metadata = {
   title: "Malaria MIS Analytics",
-  description: "NMCP Bangladesh malaria MIS — pivot analysis, BI dashboard and GIS",
+  description: "Bangladesh malaria data warehouse — surveillance, forecasting, climate, GIS, alerts and AI analyst",
 };
 
-type Tab = "pivot" | "bi";
+type Tab = "overview" | "pivot" | "bi" | "forecast" | "epi" | "alerts" | "ai";
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Command Center" },
+  { id: "epi", label: "Epidemiology" },
+  { id: "forecast", label: "Forecast & Climate" },
+  { id: "bi", label: "BI & GIS Map" },
   { id: "pivot", label: "Pivot Analysis" },
-  { id: "bi", label: "BI Dashboard & GIS" },
+  { id: "alerts", label: "Alerts" },
+  { id: "ai", label: "AI Analyst" },
 ];
+/** Tabs that work on the in-browser dataset for the selected year range. */
+const DATA_TABS = new Set<Tab>(["pivot", "bi", "epi"]);
 const DEFAULT_SPAN_YEARS = 5;
 
 type DbRow = {
@@ -33,15 +45,6 @@ type DbArea = {
   district_name: string;
   division_name: string;
 };
-
-const globalForDb = globalThis as unknown as { misSql?: ReturnType<typeof postgres> };
-
-function getSql() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is not set.");
-  globalForDb.misSql ??= postgres(url, { max: 5, prepare: false, idle_timeout: 20 });
-  return globalForDb.misSql;
-}
 
 async function loadDataset(from: number, to: number): Promise<MisDataset> {
   const sql = getSql();
@@ -91,7 +94,8 @@ const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i)
 
 export default async function HomePage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-  const tab: Tab = params.tab === "bi" ? "bi" : "pivot";
+  const tab: Tab = TABS.some((t) => t.id === params.tab) ? (params.tab as Tab) : "overview";
+  const needsData = DATA_TABS.has(tab);
   const toParam = parseYear(params.to) ?? new Date().getFullYear();
   const fromParam = parseYear(params.from) ?? toParam - (DEFAULT_SPAN_YEARS - 1);
   const from = Math.min(fromParam, toParam);
@@ -99,62 +103,54 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
 
   let dataset: MisDataset | null = null;
   let loadError: string | null = null;
-  try {
-    dataset = await loadDataset(from, to);
-  } catch (err) {
-    loadError = err instanceof Error ? err.message : "Failed to load MIS data.";
+  if (needsData) {
+    try {
+      dataset = await loadDataset(from, to);
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : "Failed to load MIS data.";
+    }
   }
 
   const yearOptions = [...new Set([...(dataset?.years ?? []), ...range(from, to)])].sort((a, b) => a - b);
-  const syncedLabel = dataset?.syncedAt
-    ? new Date(dataset.syncedAt).toLocaleString("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short" })
-    : "never";
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-6 py-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Malaria MIS Analytics</h1>
-            <p className="text-xs text-slate-500">
-              Source: NMCP LMIS · Last successful sync: {syncedLabel} (BST) · {dataset?.rows.length.toLocaleString("en-US") ?? 0} upazila-months
-            </p>
+    <main className="min-h-screen bg-slate-100 text-slate-900">
+      <header className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 text-white">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-6 pt-4">
+          <div className="flex items-center gap-3">
+            <div aria-hidden className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-indigo-500 text-lg font-black">M</div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">Malaria MIS Analytics · Bangladesh</h1>
+              <p className="text-xs text-indigo-200">NMCP LMIS data warehouse · ERA5 climate · forecasting · GIS · alerts · AI analyst</p>
+            </div>
           </div>
 
-          <form method="get" className="flex items-end gap-2 text-sm">
-            <input type="hidden" name="tab" value={tab} />
-            <label className="flex flex-col text-xs font-medium text-slate-600">
-              From
-              <select name="from" defaultValue={from} className="mt-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm">
-                {yearOptions.map((y) => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col text-xs font-medium text-slate-600">
-              To
-              <select name="to" defaultValue={to} className="mt-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm">
-                {yearOptions.map((y) => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            </label>
-            <button type="submit" className="rounded bg-slate-900 px-3 py-1.5 font-medium text-white hover:bg-slate-700">
-              Apply
-            </button>
-          </form>
+          {needsData && (
+            <form method="get" className="flex items-end gap-2 text-sm">
+              <input type="hidden" name="tab" value={tab} />
+              {(["from", "to"] as const).map((name) => (
+                <label key={name} className="flex flex-col text-xs font-medium text-indigo-200">
+                  {name === "from" ? "From" : "To"}
+                  <select name={name} defaultValue={name === "from" ? from : to} className="mt-1 rounded border border-white/20 bg-slate-900 px-2 py-1.5 text-sm text-white">
+                    {yearOptions.map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <button type="submit" className="rounded bg-indigo-500 px-3 py-1.5 font-medium text-white hover:bg-indigo-400">Apply</button>
+            </form>
+          )}
         </div>
 
-        <nav className="mx-auto flex max-w-[1600px] gap-1 px-6" aria-label="Views">
+        <nav className="mx-auto mt-3 flex max-w-[1600px] gap-1 overflow-x-auto px-6" aria-label="Views">
           {TABS.map((t) => (
             <Link
               key={t.id}
-              href={{ query: { tab: t.id, from, to } }}
+              href={{ query: DATA_TABS.has(t.id) ? { tab: t.id, from, to } : { tab: t.id } }}
               aria-current={tab === t.id ? "page" : undefined}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-                tab === t.id
-                  ? "border-rose-600 text-rose-700"
-                  : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800"
+              className={`whitespace-nowrap rounded-t-lg px-4 py-2 text-sm font-medium ${
+                tab === t.id ? "bg-slate-100 text-slate-900" : "text-indigo-200 hover:bg-white/10 hover:text-white"
               }`}
             >
               {t.label}
@@ -172,12 +168,20 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
               First run? Call <code>/api/cron/sync-mis</code> (with <code>Authorization: Bearer $CRON_SECRET</code>) to create tables and import data.
             </p>
           </div>
+        ) : tab === "overview" ? (
+          <OverviewTab />
+        ) : tab === "forecast" ? (
+          <ForecastTab />
+        ) : tab === "alerts" ? (
+          <AlertsTab />
+        ) : tab === "ai" ? (
+          <AnalystChat />
         ) : !dataset || dataset.rows.length === 0 ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600">
-            No records for {from}–{to}.
-          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600">No records for {from}–{to}.</div>
         ) : tab === "pivot" ? (
           <PivotTab key={`${from}-${to}`} dataset={dataset} />
+        ) : tab === "epi" ? (
+          <EpiTab key={`${from}-${to}`} dataset={dataset} />
         ) : (
           <BiTab key={`${from}-${to}`} dataset={dataset} />
         )}

@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import postgres from "postgres";
 import { z } from "zod";
+import { ALERTS_SCHEMA, runAlerts } from "@/lib/alerts";
 import {
   MONTHS,
   NUMERIC_FIELDS,
@@ -197,7 +198,7 @@ export async function GET(request: NextRequest) {
   let logId: number | null = null;
 
   try {
-    for (const statement of SCHEMA) await sql.unsafe(statement);
+    for (const statement of [...SCHEMA, ...ALERTS_SCHEMA]) await sql.unsafe(statement);
 
     const [log] = await sql<{ id: number }[]>`
       INSERT INTO mis_sync_log (source_url) VALUES (${SOURCE_URL}) RETURNING id`;
@@ -228,8 +229,12 @@ export async function GET(request: NextRequest) {
           valid = ${rows.length}, rejected = ${rejected}, duplicates = ${duplicates}, changed = ${changed}
       WHERE id = ${logId}`;
 
+    // Deaths and sudden case surges → alerts table + one email digest (never fails the sync).
+    const alerts = await runAlerts(sql);
+
     return NextResponse.json({
       ok: true,
+      alerts,
       fetched: payload.length,
       valid: rows.length,
       rejected,

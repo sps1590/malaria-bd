@@ -3,6 +3,8 @@
  * Isomorphic: used by the cron route (server) and both dashboards (client).
  */
 
+import geoAliases from "./geo-aliases.json";
+
 /* ------------------------------ Source model ------------------------------ */
 
 export const MONTHS = [
@@ -238,36 +240,11 @@ export function formatMeasure(key: MeasureKey, value: number | null | undefined)
 
 /* --------------------------------- Geo ----------------------------------- */
 
-/** Spelling variants (MIS, BBS, HDX COD-AB, geoBoundaries) → one canonical key. */
-const GEO_ALIASES: Record<string, string> = {
-  chittagong: "chattogram",
-  comilla: "cumilla",
-  kumilla: "cumilla",
-  barisal: "barishal",
-  rajshani: "rajshahi",
-  brahamanbaria: "brahmanbaria",
-  jessore: "jashore",
-  bogra: "bogura",
-  hobigonj: "habiganj",
-  hobiganj: "habiganj",
-  laksmipur: "lakshmipur",
-  laxmipur: "lakshmipur",
-  perojpur: "pirojpur",
-  narayangnj: "narayanganj",
-  norshingdi: "narsingdi",
-  narshingdi: "narsingdi",
-  serajganj: "sirajganj",
-  jhalokathi: "jhalokati",
-  jhalakathi: "jhalokati",
-  maulvibazar: "moulvibazar",
-  khagrachari: "khagrachhari",
-  netrakona: "netrokona",
-  nawabganj: "chapainawabganj",
-  chapainababganj: "chapainawabganj",
-  jhenaidaha: "jhenaidah",
-  kishorganj: "kishoreganj",
-  munshigonj: "munshiganj",
-};
+/**
+ * Spelling variants (MIS, BBS, HDX COD-AB, geoBoundaries) → one canonical key.
+ * Shared with the Python pipeline (pipeline/common.py) so both sides join areas identically.
+ */
+const GEO_ALIASES: Record<string, string> = geoAliases.names;
 
 export function canonicalGeoName(name: string): string {
   const base = name
@@ -278,19 +255,8 @@ export function canonicalGeoName(name: string): string {
   return GEO_ALIASES[base] ?? base;
 }
 
-/** MIS upazila spellings that no phonetic rule reconciles with the boundary names. */
-const UPAZILA_ALIASES: Record<string, string> = {
-  rajibpur: "charrajibpur",
-  bishwarmvarpur: "bishwambarpur",
-  habigang: "habiganj",
-  jessore: "kotwali", // "Jessore Sadar" = Kotwali
-  cumilla: "comillaadarsha", // "Cumilla Sadar" = Comilla Adarsha Sadar
-  tetulia: "tentulia",
-  ghorahat: "ghoraghat",
-  kathalia: "kanthalia",
-  zajira: "zanjira",
-  dhubchanchia: "dhupchanchia",
-};
+/** MIS upazila spellings no phonetic rule reconciles (e.g. "Jessore Sadar" = Kotwali). */
+const UPAZILA_ALIASES: Record<string, string> = geoAliases.upazila;
 
 /**
  * Looser key for upazila names, whose transliterations vary widely
