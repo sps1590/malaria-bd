@@ -149,26 +149,24 @@ export default function ForecastTab() {
         <span className="text-xs text-slate-500">Forecasts are retrained daily after the MIS sync; accuracy is re-measured every run.</span>
       </div>
 
-      {run && (
-        <PopoutCard
-          title={`Selected model · ${data.selected?.area_name}`}
-          downloadName={`forecast-model-${data.selected?.area_name}`}
-          className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white"
-        >
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">{MODEL_LABEL[run.model] ?? run.model}</h2>
-              <div className="mt-3 flex flex-wrap gap-6">
-                <Metric value={run.accuracy_pct === null ? "—" : `${run.accuracy_pct}%`} label="1-month-ahead accuracy" />
-                <Metric value={run.accuracy_3m_pct === null ? "—" : `${run.accuracy_3m_pct}%`} label="3-months-ahead accuracy" />
-                <Metric value={fmtNum(run.mae, 0)} label="mean abs. error (cases/month)" />
-              </div>
-              <p className="mt-3 text-xs leading-relaxed text-slate-600">
-                <b>Note:</b> {run.notes} Accuracy is measured honestly on forecasts made only with data available at the time; it is not tuned to a target.
-                Trained on {run.train_start} → {run.train_end}.
-              </p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {run && (
+          <PopoutCard
+            title={`Selected model · ${data.selected?.area_name}`}
+            downloadName={`forecast-model-${data.selected?.area_name}`}
+            className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white"
+          >
+            <h2 className="text-lg font-bold text-slate-900">{MODEL_LABEL[run.model] ?? run.model}</h2>
+            <div className="mt-3 flex flex-wrap gap-6">
+              <Metric value={run.accuracy_pct === null ? "—" : `${run.accuracy_pct}%`} label="1-month-ahead accuracy" />
+              <Metric value={run.accuracy_3m_pct === null ? "—" : `${run.accuracy_3m_pct}%`} label="3-months-ahead accuracy" />
+              <Metric value={fmtNum(run.mae, 0)} label="mean abs. error (cases/month)" />
             </div>
-            <div className="overflow-x-auto">
+            <p className="mt-3 text-xs leading-relaxed text-slate-600">
+              <b>Note:</b> {run.notes} Accuracy is measured honestly on forecasts made only with data available at the time; it is not tuned to a target.
+              Trained on {run.train_start} → {run.train_end}.
+            </p>
+            <div className="mt-4 overflow-x-auto">
               <table className="min-w-full text-xs">
                 <thead className="text-left text-slate-500">
                   <tr><th className="py-1 pr-3 font-medium">Model compared</th><th className="py-1 pr-3 text-right font-medium">1-month</th><th className="py-1 pr-3 text-right font-medium">3-month</th><th className="py-1 text-right font-medium">MAE</th></tr>
@@ -185,24 +183,24 @@ export default function ForecastTab() {
                 </tbody>
               </table>
             </div>
-          </div>
-        </PopoutCard>
-      )}
+          </PopoutCard>
+        )}
 
-      <ChartCard title={`Confirmed cases — actual, back-tested and forecast (${data.selected?.area_name})`} height={340}>
-        <ComposedChart data={caseRows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} stroke={GRID} />
-          <XAxis dataKey="period" tick={axisTick} minTickGap={28} />
-          <YAxis tick={axisTick} width={52} />
-          <Tooltip formatter={tooltipValue} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Area dataKey="band95" name="95% range" stroke="none" fill={SERIES[1]} fillOpacity={0.1} isAnimationActive={false} />
-          <Area dataKey="band80" name="80% range" stroke="none" fill={SERIES[1]} fillOpacity={0.22} isAnimationActive={false} />
-          <Line dataKey="actual" name="Actual cases" stroke={SERIES[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
-          <Line dataKey="backtest" name="Model, 1 month ahead (back-test)" stroke={SERIES[2]} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-          <Line dataKey="forecast" name="Forecast" stroke={SERIES[1]} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} isAnimationActive={false} />
-        </ComposedChart>
-      </ChartCard>
+        <ChartCard title={`Confirmed cases — actual, back-tested and forecast (${data.selected?.area_name})`} height={340}>
+          <ComposedChart data={caseRows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} stroke={GRID} />
+            <XAxis dataKey="period" tick={axisTick} minTickGap={28} />
+            <YAxis tick={axisTick} width={52} />
+            <Tooltip formatter={tooltipValue} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Area dataKey="band95" name="95% range" stroke="none" fill={SERIES[1]} fillOpacity={0.1} isAnimationActive={false} />
+            <Area dataKey="band80" name="80% range" stroke="none" fill={SERIES[1]} fillOpacity={0.22} isAnimationActive={false} />
+            <Line dataKey="actual" name="Actual cases" stroke={SERIES[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line dataKey="backtest" name="Model, 1 month ahead (back-test)" stroke={SERIES[2]} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
+            <Line dataKey="forecast" name="Forecast" stroke={SERIES[1]} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} isAnimationActive={false} />
+          </ComposedChart>
+        </ChartCard>
+      </div>
 
       <PopoutCard title="Forecasts vs real data — live tracking" className="border-emerald-200 bg-emerald-50/50" noDownload={!data.live?.length}>
         {data.live?.length ? (

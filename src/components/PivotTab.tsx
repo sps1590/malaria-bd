@@ -26,21 +26,25 @@ import {
 /* -------------------------------- Config -------------------------------- */
 
 type DimensionKey = "divisionName" | "districtName" | "upazilaName" | "year" | "quarter" | "yearMonth" | "month";
+/** Any field — geography/time dimension or numeric measure — can now go in Rows, Columns or Values. */
+type FieldKey = DimensionKey | MeasureKey;
 
-interface Dimension {
+interface FieldMeta {
   label: string;
-  value: (r: MisRecord) => string;
-  key?: (r: MisRecord) => string;
+  kind: "dimension" | "measure";
+  title?: string;
   compare?: (a: string, b: string) => number;
+  /** This field's value for one record — the grouping key when placed in Rows/Columns. */
+  value: (r: MisRecord) => string;
 }
 
 const MONTH_ORDER = new Map<string, number>(MONTHS.map((m, i) => [m, i]));
 const naturalCompare = (a: string, b: string) => a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
 
-const DIMENSIONS: Record<DimensionKey, Dimension> = {
+const DIMENSIONS: Record<DimensionKey, { label: string; value: (r: MisRecord) => string; compare?: (a: string, b: string) => number }> = {
   divisionName: { label: "Division", value: (r) => r.divisionName },
-  districtName: { label: "District", value: (r) => r.districtName, key: (r) => String(r.districtId) },
-  upazilaName: { label: "Upazila", value: (r) => r.upazilaName, key: (r) => String(r.upazilaId) },
+  districtName: { label: "District", value: (r) => r.districtName },
+  upazilaName: { label: "Upazila", value: (r) => r.upazilaName },
   year: { label: "Year", value: (r) => String(r.year) },
   quarter: { label: "Quarter", value: (r) => `${r.year}-Q${Math.ceil(r.month / 3)}` },
   yearMonth: { label: "Year-Month", value: (r) => `${r.year}-${String(r.month).padStart(2, "0")}` },
@@ -54,7 +58,43 @@ const DIMENSIONS: Record<DimensionKey, Dimension> = {
 const DIMENSION_KEYS = Object.keys(DIMENSIONS) as DimensionKey[];
 const INDICATOR_KEYS = Object.keys(INDICATORS) as IndicatorKey[];
 
-const MAX_ROW_FIELDS = 3;
+/** A measure placed in Rows/Columns groups by that single record's own value for it (Excel does the same). */
+function measureFieldValue(r: MisRecord, key: MeasureKey): string {
+  if (!isIndicator(key)) return String(r[key]);
+  const v = measureValue(addRecord(emptyTotals(), r), key);
+  return v === null ? "—" : v.toFixed(2);
+}
+
+const FIELDS: Record<FieldKey, FieldMeta> = {
+  ...Object.fromEntries(
+    DIMENSION_KEYS.map((key) => [key, { label: DIMENSIONS[key].label, kind: "dimension" as const, compare: DIMENSIONS[key].compare, value: DIMENSIONS[key].value }]),
+  ),
+  ...Object.fromEntries(
+    INDICATOR_KEYS.map((key) => [key, { label: INDICATORS[key].label, kind: "measure" as const, title: INDICATORS[key].formula, value: (r: MisRecord) => measureFieldValue(r, key) }]),
+  ),
+  ...Object.fromEntries(
+    NUMERIC_FIELDS.map((f) => [f.key, { label: f.label, kind: "measure" as const, value: (r: MisRecord) => measureFieldValue(r, f.key) }]),
+  ),
+} as Record<FieldKey, FieldMeta>;
+
+const ALL_FIELDS: { key: FieldKey; label: string; title?: string; tone: "dimension" | "count" | "indicator" }[] = [
+  ...DIMENSION_KEYS.map((key) => ({ key: key as FieldKey, label: DIMENSIONS[key].label, tone: "dimension" as const })),
+  ...INDICATOR_KEYS.map((key) => ({ key: key as FieldKey, label: INDICATORS[key].label, title: INDICATORS[key].formula, tone: "indicator" as const })),
+  ...NUMERIC_FIELDS.map((f) => ({ key: f.key as FieldKey, label: f.label, tone: "count" as const })),
+];
+
+const toneOf = (key: FieldKey): "dimension" | "count" | "indicator" =>
+  FIELDS[key].kind === "dimension" ? "dimension" : isIndicator(key) ? "indicator" : "count";
+
+/** Header label for a value column: the measure's own label, or "Distinct <field>" for a dimension used as a value. */
+const fieldValueLabel = (key: FieldKey) => (FIELDS[key].kind === "measure" ? measureLabel(key as MeasureKey) : `Distinct ${FIELDS[key].label}`);
+
+function formatFieldValue(key: FieldKey, v: number | null): string {
+  if (v === null || !Number.isFinite(v)) return "—";
+  return FIELDS[key].kind === "measure" ? formatMeasure(key as MeasureKey, v) : v.toLocaleString("en-US");
+}
+
+const MAX_FIELDS = 3; // per Rows and per Columns — nested left → right; Values is uncapped
 const ROW_HEIGHT = 32;
 const HEADER_HEIGHT = 52;
 const DIM_WIDTH = 190;
@@ -62,124 +102,154 @@ const VALUE_WIDTH = 124;
 const KEY_SEP = "␟";
 
 interface PivotConfig {
-  rows: DimensionKey[];
-  column: DimensionKey | null;
-  values: MeasureKey[];
+  rows: FieldKey[];
+  columns: FieldKey[];
+  values: FieldKey[];
 }
 
 const DEFAULT_CONFIG: PivotConfig = {
   rows: ["divisionName", "districtName"],
-  column: "year",
+  columns: ["year"],
   values: ["cases", "tests", "tpr", "api"],
 };
 
-type FieldRef = { kind: "dimension"; key: DimensionKey } | { kind: "measure"; key: MeasureKey };
-type Zone = "rows" | "column" | "values";
+type Zone = "rows" | "columns" | "values";
 type SortState = { id: string; dir: 1 | -1 } | null;
+
+/** Per-cell accumulator: summed Totals for measure values, plus a distinct-value Set per dimension field placed in Values. */
+interface CellAgg {
+  totals: Totals;
+  distinct: Map<FieldKey, Set<string>>;
+}
+function newCellAgg(): CellAgg {
+  return { totals: emptyTotals(), distinct: new Map() };
+}
+function addToCell(agg: CellAgg, record: MisRecord, distinctFields: FieldKey[]) {
+  addRecord(agg.totals, record);
+  for (const f of distinctFields) {
+    let set = agg.distinct.get(f);
+    if (!set) agg.distinct.set(f, (set = new Set()));
+    set.add(FIELDS[f].value(record));
+  }
+}
+function mergeCellInto(target: CellAgg, source: CellAgg) {
+  addTotals(target.totals, source.totals);
+  for (const [field, set] of source.distinct) {
+    let t = target.distinct.get(field);
+    if (!t) target.distinct.set(field, (t = new Set()));
+    for (const v of set) t.add(v);
+  }
+}
+function getOrCreateCell(map: Map<string, CellAgg>, key: string): CellAgg {
+  let c = map.get(key);
+  if (!c) map.set(key, (c = newCellAgg()));
+  return c;
+}
 
 interface PivotRow {
   key: string;
   labels: string[];
-  cells: Map<string, Totals>;
-  total: Totals;
+  cells: Map<string, CellAgg>;
+  total: CellAgg;
 }
 interface PivotColumn {
   key: string;
+  labels: string[];
   label: string;
 }
 interface PivotResult {
   rows: PivotRow[];
   columns: PivotColumn[];
-  columnTotals: Map<string, Totals>;
-  grandTotal: Totals;
+  columnTotals: Map<string, CellAgg>;
+  grandTotal: CellAgg;
 }
 interface ValueColumn {
   id: string;
   colKey: string | null; // null → row total
   group: string;
-  measure: MeasureKey;
+  field: FieldKey;
 }
 
 /* ------------------------------ Pivot engine ----------------------------- */
 
-const dimensionKey = (d: DimensionKey, r: MisRecord) => (DIMENSIONS[d].key ?? DIMENSIONS[d].value)(r);
-
-function getOrCreate(map: Map<string, Totals>, key: string): Totals {
-  let t = map.get(key);
-  if (!t) map.set(key, (t = emptyTotals()));
-  return t;
-}
-
-function buildPivot(records: readonly MisRecord[], rowDims: DimensionKey[], columnDim: DimensionKey | null): PivotResult {
+function buildPivot(records: readonly MisRecord[], rowFields: FieldKey[], columnFields: FieldKey[], distinctFields: FieldKey[]): PivotResult {
   const rowMap = new Map<string, PivotRow>();
-  const columnLabels = new Map<string, string>();
-  const columnTotals = new Map<string, Totals>();
-  const grandTotal = emptyTotals();
+  const columnLabels = new Map<string, string[]>();
+  const columnTotals = new Map<string, CellAgg>();
+  const grandTotal = newCellAgg();
 
   for (const record of records) {
-    const rowKey = rowDims.length ? rowDims.map((d) => dimensionKey(d, record)).join(KEY_SEP) : "__all";
+    const rowParts = rowFields.map((f) => FIELDS[f].value(record));
+    const rowKey = rowParts.length ? rowParts.join(KEY_SEP) : "__all";
     let row = rowMap.get(rowKey);
     if (!row) {
-      row = { key: rowKey, labels: rowDims.map((d) => DIMENSIONS[d].value(record)), cells: new Map(), total: emptyTotals() };
+      row = { key: rowKey, labels: rowParts, cells: new Map(), total: newCellAgg() };
       rowMap.set(rowKey, row);
     }
-    addRecord(row.total, record);
-    addRecord(grandTotal, record);
+    addToCell(row.total, record, distinctFields);
+    addToCell(grandTotal, record, distinctFields);
 
-    if (columnDim) {
-      const colKey = dimensionKey(columnDim, record);
-      if (!columnLabels.has(colKey)) columnLabels.set(colKey, DIMENSIONS[columnDim].value(record));
-      addRecord(getOrCreate(row.cells, colKey), record);
-      addRecord(getOrCreate(columnTotals, colKey), record);
+    if (columnFields.length) {
+      const colParts = columnFields.map((f) => FIELDS[f].value(record));
+      const colKey = colParts.join(KEY_SEP);
+      if (!columnLabels.has(colKey)) columnLabels.set(colKey, colParts);
+      addToCell(getOrCreateCell(row.cells, colKey), record, distinctFields);
+      addToCell(getOrCreateCell(columnTotals, colKey), record, distinctFields);
     }
   }
 
   const rows = [...rowMap.values()].sort((a, b) => {
-    for (let i = 0; i < rowDims.length; i++) {
-      const c = (DIMENSIONS[rowDims[i]].compare ?? naturalCompare)(a.labels[i], b.labels[i]);
+    for (let i = 0; i < rowFields.length; i++) {
+      const c = (FIELDS[rowFields[i]].compare ?? naturalCompare)(a.labels[i], b.labels[i]);
       if (c) return c;
     }
     return 0;
   });
-  const columnCompare = columnDim ? (DIMENSIONS[columnDim].compare ?? naturalCompare) : naturalCompare;
-  const columns = [...columnLabels].map(([key, label]) => ({ key, label })).sort((a, b) => columnCompare(a.label, b.label));
+  const columns = [...columnLabels].map(([key, labels]) => ({ key, labels, label: labels.join(" · ") })).sort((a, b) => {
+    for (let i = 0; i < columnFields.length; i++) {
+      const c = (FIELDS[columnFields[i]].compare ?? naturalCompare)(a.labels[i], b.labels[i]);
+      if (c) return c;
+    }
+    return 0;
+  });
 
   return { rows, columns, columnTotals, grandTotal };
 }
 
-function buildValueColumns(columns: PivotColumn[], measures: MeasureKey[], crossTab: boolean): ValueColumn[] {
-  if (!crossTab) return measures.map((m) => ({ id: m, colKey: null, group: "", measure: m }));
+function buildValueColumns(columns: PivotColumn[], fields: FieldKey[], crossTab: boolean): ValueColumn[] {
+  if (!crossTab) return fields.map((f) => ({ id: f, colKey: null, group: "", field: f }));
   return [
-    ...columns.flatMap((c) => measures.map((m) => ({ id: `${c.key}${KEY_SEP}${m}`, colKey: c.key, group: c.label, measure: m }))),
-    ...measures.map((m) => ({ id: `__total${KEY_SEP}${m}`, colKey: null, group: "Grand total", measure: m })),
+    ...columns.flatMap((c) => fields.map((f) => ({ id: `${c.key}${KEY_SEP}${f}`, colKey: c.key, group: c.label, field: f }))),
+    ...fields.map((f) => ({ id: `__total${KEY_SEP}${f}`, colKey: null, group: "Grand total", field: f })),
   ];
 }
 
 function valueOf(row: PivotRow, vc: ValueColumn): number | null {
-  const t = vc.colKey === null ? row.total : row.cells.get(vc.colKey);
-  return t ? measureValue(t, vc.measure) : null;
+  const cell = vc.colKey === null ? row.total : row.cells.get(vc.colKey);
+  if (!cell) return null;
+  return FIELDS[vc.field].kind === "measure" ? measureValue(cell.totals, vc.field as MeasureKey) : (cell.distinct.get(vc.field)?.size ?? 0);
 }
 
-const TIME_DIMS = new Set<DimensionKey>(["year", "quarter", "yearMonth", "month"]);
+const TIME_DIMS = new Set<FieldKey>(["year", "quarter", "yearMonth", "month"]);
 
 /**
- * Default order (no header sort chosen): time dimensions stay chronological; place dimensions go
+ * Default order (no header sort chosen): time fields stay chronological; place/other fields go
  * from the most to the fewest cases (or deaths when deaths is the first value), group by group.
  */
-function defaultOrder(rows: PivotRow[], dims: DimensionKey[], firstMeasure: MeasureKey | undefined): PivotRow[] {
-  if (!dims.length || dims.every((d) => TIME_DIMS.has(d))) return rows;
+function defaultOrder(rows: PivotRow[], fields: FieldKey[], firstMeasure: FieldKey | undefined): PivotRow[] {
+  if (!fields.length || fields.every((d) => TIME_DIMS.has(d))) return rows;
   const basis = firstMeasure === "deaths" ? "deaths" : "cases";
   const groupTotal = new Map<string, number>();
   for (const row of rows) {
-    for (let i = 0; i < dims.length; i++) {
+    for (let i = 0; i < fields.length; i++) {
       const key = row.labels.slice(0, i + 1).join(KEY_SEP);
-      groupTotal.set(key, (groupTotal.get(key) ?? 0) + row.total[basis]);
+      groupTotal.set(key, (groupTotal.get(key) ?? 0) + row.total.totals[basis]);
     }
   }
   return [...rows].sort((a, b) => {
-    for (let i = 0; i < dims.length; i++) {
-      if (TIME_DIMS.has(dims[i])) {
-        const c = (DIMENSIONS[dims[i]].compare ?? naturalCompare)(a.labels[i], b.labels[i]);
+    for (let i = 0; i < fields.length; i++) {
+      if (TIME_DIMS.has(fields[i])) {
+        const c = (FIELDS[fields[i]].compare ?? naturalCompare)(a.labels[i], b.labels[i]);
         if (c) return c;
         continue;
       }
@@ -192,14 +262,14 @@ function defaultOrder(rows: PivotRow[], dims: DimensionKey[], firstMeasure: Meas
   });
 }
 
-function sortRows(rows: PivotRow[], sort: SortState, dims: DimensionKey[], valueColumns: ValueColumn[], firstMeasure?: MeasureKey): PivotRow[] {
-  if (!sort) return defaultOrder(rows, dims, firstMeasure);
+function sortRows(rows: PivotRow[], sort: SortState, fields: FieldKey[], valueColumns: ValueColumn[], firstMeasure?: FieldKey): PivotRow[] {
+  if (!sort) return defaultOrder(rows, fields, firstMeasure);
   const { id, dir } = sort;
   if (id.startsWith("dim:")) {
     const index = Number(id.slice(4));
-    const dim = dims[index];
-    if (!dim) return rows;
-    const compare = DIMENSIONS[dim].compare ?? naturalCompare;
+    const field = fields[index];
+    if (!field) return rows;
+    const compare = FIELDS[field].compare ?? naturalCompare;
     return [...rows].sort((a, b) => dir * compare(a.labels[index], b.labels[index]));
   }
   const column = valueColumns.find((c) => c.id === id);
@@ -210,16 +280,14 @@ function sortRows(rows: PivotRow[], sort: SortState, dims: DimensionKey[], value
     .map((x) => x.row);
 }
 
-function applyDrop(cfg: PivotConfig, zone: Zone, field: FieldRef): PivotConfig {
-  if (zone === "values") {
-    if (field.kind !== "measure" || cfg.values.includes(field.key)) return cfg;
-    return { ...cfg, values: [...cfg.values, field.key] };
-  }
-  if (field.kind !== "dimension") return cfg;
-  const rows = cfg.rows.filter((d) => d !== field.key);
-  if (zone === "column") return { ...cfg, rows, column: field.key };
-  if (rows.length >= MAX_ROW_FIELDS) return cfg;
-  return { ...cfg, rows: [...rows, field.key], column: cfg.column === field.key ? null : cfg.column };
+/** Global exclusivity: a field picked for one zone is removed from wherever else it was, then appended to the target. */
+function addField(cfg: PivotConfig, zone: Zone, key: FieldKey): PivotConfig {
+  const rows = cfg.rows.filter((k) => k !== key);
+  const columns = cfg.columns.filter((k) => k !== key);
+  const values = cfg.values.filter((k) => k !== key);
+  if (zone === "rows") return rows.length >= MAX_FIELDS ? cfg : { rows: [...rows, key], columns, values };
+  if (zone === "columns") return columns.length >= MAX_FIELDS ? cfg : { rows, columns: [...columns, key], values };
+  return { rows, columns, values: [...values, key] };
 }
 
 /* ------------------------------ UI pieces -------------------------------- */
@@ -243,8 +311,8 @@ function FieldTag({ label, tone, onRemove }: { label: string; tone: "dimension" 
 
 /**
  * One control in the field bar: shows the fields already assigned as removable tags plus a
- * "+" button. Clicking "+" pops a list of the fields NOT yet used anywhere else — nothing is
- * visible until you click, and a field picked for one zone disappears from the other pickers.
+ * "+" button. Clicking "+" pops a list of the fields NOT yet used anywhere else — every field is
+ * available to every zone, and a field picked for one zone disappears from the other pickers.
  */
 function FieldPickerGroup({
   label,
@@ -355,10 +423,16 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       return t >= from && t <= to && (!division || r.divisionName === division);
     });
   }, [records, division, monthFrom, monthTo]);
-  const pivot = useMemo(() => buildPivot(filtered, config.rows, config.column), [filtered, config.rows, config.column]);
+  // Dimension fields placed in Values are aggregated as a distinct count, so the pivot engine
+  // needs to know which fields to track Sets for.
+  const distinctValueFields = useMemo(() => config.values.filter((f) => FIELDS[f].kind === "dimension"), [config.values]);
+  const pivot = useMemo(
+    () => buildPivot(filtered, config.rows, config.columns, distinctValueFields),
+    [filtered, config.rows, config.columns, distinctValueFields],
+  );
   const valueColumns = useMemo(
-    () => buildValueColumns(pivot.columns, config.values, config.column !== null),
-    [pivot.columns, config.values, config.column],
+    () => buildValueColumns(pivot.columns, config.values, config.columns.length > 0),
+    [pivot.columns, config.values, config.columns],
   );
   const visibleRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -369,11 +443,11 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     if (visibleRows === pivot.rows) {
       return { key: "__grand", labels: [], cells: pivot.columnTotals, total: pivot.grandTotal };
     }
-    const cells = new Map<string, Totals>();
-    const total = emptyTotals();
+    const cells = new Map<string, CellAgg>();
+    const total = newCellAgg();
     for (const row of visibleRows) {
-      addTotals(total, row.total);
-      for (const [key, t] of row.cells) addTotals(getOrCreate(cells, key), t);
+      mergeCellInto(total, row.total);
+      for (const [key, cell] of row.cells) mergeCellInto(getOrCreateCell(cells, key), cell);
     }
     return { key: "__grand", labels: [], cells, total };
   }, [pivot, visibleRows]);
@@ -406,8 +480,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   const totalWidth = dimsWidth + valuesWidth;
   const virtualCols = colVirtualizer.getVirtualItems();
 
-  const dropField = (zone: Zone, field: FieldRef) => {
-    setConfig((c) => applyDrop(c, zone, field));
+  const dropField = (zone: Zone, key: FieldKey) => {
+    setConfig((c) => addField(c, zone, key));
     setSort(null);
   };
   const toggleSort = (id: string) =>
@@ -419,7 +493,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   type ExportEntry = { labels: string[]; values: (number | null)[] };
 
   function exportModel() {
-    const dimLabels = config.rows.length ? config.rows.map((d) => DIMENSIONS[d].label) : ["Scope"];
+    const dimLabels = config.rows.length ? config.rows.map((f) => FIELDS[f].label) : ["Scope"];
     const values = (row: PivotRow) => valueColumns.map((vc) => valueOf(row, vc));
     const body: ExportEntry[] = rows.map((row) => ({ labels: config.rows.length ? row.labels : ["All records"], values: values(row) }));
     const total: ExportEntry = { labels: dimLabels.map((_, i) => (i === 0 ? "Grand total" : "")), values: values(totalRow) };
@@ -427,8 +501,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   }
 
   function describeConfig() {
-    const r = config.rows.map((d) => DIMENSIONS[d].label).join(" › ") || "—";
-    const c = config.column ? DIMENSIONS[config.column].label : "—";
+    const r = config.rows.map((f) => FIELDS[f].label).join(" › ") || "—";
+    const c = config.columns.map((f) => FIELDS[f].label).join(" › ") || "—";
     return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Period: ${monthFrom} to ${monthTo}`;
   }
 
@@ -437,13 +511,13 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     try {
       const XLSX = await import("xlsx");
       const { dimLabels, body, total } = exportModel();
-      const crossTab = config.column !== null;
+      const crossTab = config.columns.length > 0;
       const toCells = (e: ExportEntry) => [
         ...e.labels,
-        ...e.values.map((v, i) => (v === null ? null : isIndicator(valueColumns[i].measure) ? Math.round(v * 100) / 100 : v)),
+        ...e.values.map((v, i) => (v === null ? null : isIndicator(valueColumns[i].field) ? Math.round(v * 100) / 100 : v)),
       ];
-      const header1 = [...dimLabels, ...valueColumns.map((vc) => (crossTab ? vc.group : measureLabel(vc.measure)))];
-      const header2 = [...dimLabels.map(() => ""), ...valueColumns.map((vc) => measureLabel(vc.measure))];
+      const header1 = [...dimLabels, ...valueColumns.map((vc) => (crossTab ? vc.group : fieldValueLabel(vc.field)))];
+      const header2 = [...dimLabels.map(() => ""), ...valueColumns.map((vc) => fieldValueLabel(vc.field))];
       // Two banner rows carry the credit line at the top and bottom of every exported sheet.
       const bannerRows = 2;
       const aoa = [
@@ -484,7 +558,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     try {
       const [{ jsPDF }, { autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
       const { dimLabels, body, total } = exportModel();
-      const fmt = (e: ExportEntry) => [...e.labels, ...e.values.map((v, i) => formatMeasure(valueColumns[i].measure, v))];
+      const fmt = (e: ExportEntry) => [...e.labels, ...e.values.map((v, i) => formatFieldValue(valueColumns[i].field, v))];
 
       const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: valueColumns.length > 12 ? "a3" : "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -497,7 +571,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
 
       autoTable(doc, {
         startY: 54,
-        head: [[...dimLabels, ...valueColumns.map((vc) => (vc.group ? `${vc.group}\n${measureLabel(vc.measure)}` : measureLabel(vc.measure)))]],
+        head: [[...dimLabels, ...valueColumns.map((vc) => (vc.group ? `${vc.group}\n${fieldValueLabel(vc.field)}` : fieldValueLabel(vc.field)))]],
         body: body.map(fmt),
         foot: [fmt(total)],
         showFoot: "lastPage",
@@ -542,27 +616,21 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           <div
             key={vc.id}
             className={`absolute top-0 flex h-full items-center justify-end border-r border-slate-100 px-2 text-sm tabular-nums ${
-              isIndicator(vc.measure) ? "text-emerald-800" : "text-slate-800"
-            } ${vc.colKey === null && config.column ? "bg-slate-50" : ""} ${bold ? "font-semibold" : ""}`}
+              FIELDS[vc.field].kind === "measure" && isIndicator(vc.field) ? "text-emerald-800" : "text-slate-800"
+            } ${vc.colKey === null && config.columns.length > 0 ? "bg-slate-50" : ""} ${bold ? "font-semibold" : ""}`}
             style={{ left: col.start - dimsWidth, width: col.size }}
           >
-            {formatMeasure(vc.measure, valueOf(row, vc))}
+            {formatFieldValue(vc.field, valueOf(row, vc))}
           </div>
         );
       })}
     </div>
   );
 
-  // Every dimension is usable in exactly one of Rows / Columns at a time; a measure in exactly one
-  // Values slot. The "+ Add" popovers only ever list what's left, so a field picked for one zone
-  // disappears from the others automatically.
-  const usedDims = new Set<DimensionKey>(config.column ? [...config.rows, config.column] : config.rows);
-  const rowOptions = DIMENSION_KEYS.filter((k) => !usedDims.has(k)).map((k) => ({ key: k, label: DIMENSIONS[k].label, tone: "dimension" as const }));
-  const columnOptions = DIMENSION_KEYS.filter((k) => !config.rows.includes(k) && k !== config.column).map((k) => ({ key: k, label: DIMENSIONS[k].label, tone: "dimension" as const }));
-  const valueOptions = [
-    ...INDICATOR_KEYS.filter((k) => !config.values.includes(k)).map((k) => ({ key: k, label: INDICATORS[k].label, title: INDICATORS[k].formula, tone: "indicator" as const })),
-    ...NUMERIC_FIELDS.filter((f) => !config.values.includes(f.key)).map((f) => ({ key: f.key, label: f.label, tone: "count" as const })),
-  ];
+  // Every field is available to every zone, and picking one for a zone removes it from the
+  // others' "+ Add" lists — the same pool is passed to all three pickers.
+  const usedFields = new Set<FieldKey>([...config.rows, ...config.columns, ...config.values]);
+  const availableFields = ALL_FIELDS.filter((f) => !usedFields.has(f.key));
 
   return (
     <div className="space-y-3">
@@ -570,34 +638,37 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-200 bg-white p-2.5">
         <FieldPickerGroup
           label="Rows"
-          hint={`Nested left → right, max ${MAX_ROW_FIELDS}`}
+          hint={`Nested left → right, max ${MAX_FIELDS}`}
           tags={config.rows.map((key) => ({
-            key, label: DIMENSIONS[key].label, tone: "dimension",
-            onRemove: () => setConfig((c) => ({ ...c, rows: c.rows.filter((d) => d !== key) })),
+            key, label: FIELDS[key].label, tone: toneOf(key),
+            onRemove: () => setConfig((c) => ({ ...c, rows: c.rows.filter((k) => k !== key) })),
           }))}
-          options={rowOptions}
-          onAdd={(key) => dropField("rows", { kind: "dimension", key: key as DimensionKey })}
-          disabled={config.rows.length >= MAX_ROW_FIELDS}
+          options={availableFields}
+          onAdd={(key) => dropField("rows", key as FieldKey)}
+          disabled={config.rows.length >= MAX_FIELDS}
         />
         <div className="h-6 w-px bg-slate-200" aria-hidden />
         <FieldPickerGroup
           label="Columns"
-          hint="One dimension for cross-tab"
-          tags={config.column ? [{ key: config.column, label: DIMENSIONS[config.column].label, tone: "dimension", onRemove: () => setConfig((c) => ({ ...c, column: null })) }] : []}
-          options={columnOptions}
-          onAdd={(key) => dropField("column", { kind: "dimension", key: key as DimensionKey })}
-          disabled={config.column !== null}
+          hint={`Nested left → right for cross-tab, max ${MAX_FIELDS}`}
+          tags={config.columns.map((key) => ({
+            key, label: FIELDS[key].label, tone: toneOf(key),
+            onRemove: () => setConfig((c) => ({ ...c, columns: c.columns.filter((k) => k !== key) })),
+          }))}
+          options={availableFields}
+          onAdd={(key) => dropField("columns", key as FieldKey)}
+          disabled={config.columns.length >= MAX_FIELDS}
         />
         <div className="h-6 w-px bg-slate-200" aria-hidden />
         <FieldPickerGroup
           label="Values"
-          hint="Counts are summed; indicators derived from sums"
+          hint="Counts are summed, indicators derived from sums; a place or time field here counts its distinct values"
           tags={config.values.map((key) => ({
-            key, label: isIndicator(key) ? INDICATORS[key].label : measureLabel(key), tone: isIndicator(key) ? "indicator" : "count",
+            key, label: fieldValueLabel(key), tone: toneOf(key),
             onRemove: () => setConfig((c) => ({ ...c, values: c.values.filter((v) => v !== key) })),
           }))}
-          options={valueOptions}
-          onAdd={(key) => dropField("values", { kind: "measure", key: key as MeasureKey })}
+          options={availableFields}
+          onAdd={(key) => dropField("values", key as FieldKey)}
         />
         <span className="ml-auto text-[11px] text-slate-400">
           API &amp; ABER use population from <b>{dataset.populationSource ?? "— (not imported)"}</b>
@@ -699,7 +770,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
                     className="sticky z-30 flex h-full flex-none items-end border-r border-slate-300 bg-slate-100 px-2 pb-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-200"
                     style={{ left: i * DIM_WIDTH, width: DIM_WIDTH }}
                   >
-                    {config.rows[i] ? DIMENSIONS[config.rows[i]].label : "Scope"}
+                    {config.rows[i] ? FIELDS[config.rows[i]].label : "Scope"}
                     {sortMark(`dim:${i}`)}
                   </button>
                 ))}
@@ -711,13 +782,13 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
                         key={vc.id}
                         type="button"
                         onClick={() => toggleSort(vc.id)}
-                        title={isIndicator(vc.measure) ? INDICATORS[vc.measure].formula : undefined}
+                        title={FIELDS[vc.field].title}
                         className="absolute top-0 flex h-full flex-col items-end justify-center border-r border-slate-200 px-2 text-right hover:bg-slate-200"
                         style={{ left: col.start - dimsWidth, width: col.size }}
                       >
                         {vc.group && <span className="w-full truncate text-[11px] font-semibold text-slate-500">{vc.group}</span>}
                         <span className="w-full truncate text-xs font-semibold text-slate-800">
-                          {measureLabel(vc.measure)}
+                          {fieldValueLabel(vc.field)}
                           {sortMark(vc.id)}
                         </span>
                       </button>

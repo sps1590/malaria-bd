@@ -13,9 +13,15 @@ Next.js 16 (App Router, React 19, TypeScript, Tailwind v4) · PostgreSQL · Pyth
 | **Epidemiology** | WHO endemic channel with epidemic threshold (mean + 2 SD), species trend, age/sex/pregnancy, active vs passive detection, severity/treatment/referral, reporting completeness, persistent hotspots |
 | **Forecast & Climate** | 18-month case and death forecasts with 80%/95% ranges, back-test vs actual, the selected model and its **measured** accuracy, full model comparison, live tracking of past forecasts against real data, ERA5 climate panels and lagged climate–malaria correlations |
 | **BI & GIS Map** | Drag-and-drop dashboard; every panel opens larger with Division → District → Upazila drill-down and downloads as PNG; cases/deaths/tests with forecast; map red means **> 1,000 cases** for divisions, **> 500** for districts, **> 200** for upazilas (0 cases ash-grey) |
-| **Pivot Analysis** | Excel-style cross-tabulation with API/TPR/ABER/CFR, month date-range filter, places sorted from most to fewest cases, virtualized grid, `.xlsx`/`.pdf` export |
+| **Pivot Analysis** | One-line field bar for Rows / Columns / Values — click "+ Add" to pop a list of the fields not already used elsewhere (a field picked for one disappears from the other two); *any* field works in *any* of the three, including measures (a measure placed in Rows/Columns groups by that record's own value) and places/time placed as a Value (counted as a distinct count); multiple nested fields per zone, month date-range filter, virtualized grid, `.xlsx`/`.pdf` export |
 | **Alerts** | Every reported death and every sudden surge (district/upazila cases > usual pattern + 50), email preview, delivery status |
 | **AI Analyst** | Chat that answers questions from the warehouse, forecasts, climate data and alerts |
+
+Every table and chart on every tab — not just BI & GIS Map — can be downloaded as a PNG and opened
+larger in a full-screen view. The header shows a live clock in the viewer's own local time zone plus
+current temperature/rainfall/precipitation chance/humidity for Dhaka, and "This system Build by: Md.
+Shahriar Parvez | MIS/IT Expert | NMEP" is shown top-right of the header, bottom-right of the page
+footer, and stamped into every exported PNG/`.xlsx`/`.pdf`.
 
 ### Data flow (daily)
 

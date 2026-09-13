@@ -85,53 +85,78 @@ export default function NspSection({ level, areaName }: { level: string; areaNam
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-xs">
-          <thead className="text-left text-slate-500">
-            <tr>
-              <th className="py-1 pr-3 font-medium">Year</th>
-              <th className="py-1 pr-3 text-right font-medium">Population</th>
-              <th className="py-1 pr-3 text-right font-medium">Actual cases</th>
-              <th className="py-1 pr-3 text-right font-medium">NSP target</th>
-              <th className="py-1 pr-3 text-right font-medium">Expected*</th>
-              <th className="py-1 pr-3 text-right font-medium">API actual</th>
-              <th className="py-1 pr-3 text-right font-medium">API target</th>
-              <th className="py-1 pr-3 text-right font-medium">ABER actual</th>
-              <th className="py-1 pr-3 text-right font-medium">ABER target</th>
-              <th className="py-1 pr-3 text-right font-medium">Tests actual</th>
-              <th className="py-1 pr-3 text-right font-medium">Tests target</th>
-              <th className="py-1 pr-3 text-right font-medium text-red-700">Deaths actual</th>
-              <th className="py-1 text-right font-medium text-red-700">Deaths target</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((y) => {
-              const onTrack = y.expected_cases !== null && y.nsp_cases !== null ? y.expected_cases <= y.nsp_cases : null;
-              return (
-                <tr key={y.year} className="border-t border-violet-100 tabular-nums">
-                  <td className="py-1 pr-3">{y.year}{y.months_reported > 0 && y.months_reported < 12 ? <span className="text-slate-400"> ({y.months_reported} mo)</span> : null}</td>
-                  <td className="py-1 pr-3 text-right">{fmtInt(y.population)}</td>
-                  <td className="py-1 pr-3 text-right">{fmtInt(y.actual_cases)}</td>
-                  <td className="py-1 pr-3 text-right">{fmtInt(y.nsp_cases)}</td>
-                  <td className={`py-1 pr-3 text-right ${onTrack === null ? "" : onTrack ? "text-emerald-700" : "text-rose-700"}`}>{fmtInt(y.expected_cases)}</td>
-                  <td className="py-1 pr-3 text-right">{fmtNum(y.api_actual, 2)}</td>
-                  <td className="py-1 pr-3 text-right">{fmtNum(y.nsp_api, 2)}</td>
-                  <td className="py-1 pr-3 text-right">{y.aber_actual_pct === null ? "—" : `${fmtNum(y.aber_actual_pct, 1)}%`}</td>
-                  <td className="py-1 pr-3 text-right">{y.nsp_aber_pct === null ? "—" : `${fmtNum(y.nsp_aber_pct, 1)}%`}</td>
-                  <td className="py-1 pr-3 text-right">{fmtInt(y.actual_tests)}</td>
-                  <td className="py-1 pr-3 text-right">{fmtInt(y.nsp_tests)}</td>
-                  <td className="py-1 pr-3 text-right text-red-700">{fmtInt(y.actual_deaths)}</td>
-                  <td className="py-1 text-right text-red-700">{fmtNum(y.nsp_deaths, 1)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {/* Compact core table (left) plus a per-metric Actual/Target summary (right) — avoids the
+          horizontal scroll of one wide table by grouping each metric's actual and target together. */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead className="text-left text-slate-500">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Year</th>
+                <th className="py-1 pr-3 text-right font-medium">Population</th>
+                <th className="py-1 pr-3 text-right font-medium">Actual cases</th>
+                <th className="py-1 pr-3 text-right font-medium">NSP target</th>
+                <th className="py-1 text-right font-medium">Expected*</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((y) => {
+                const onTrack = y.expected_cases !== null && y.nsp_cases !== null ? y.expected_cases <= y.nsp_cases : null;
+                return (
+                  <tr key={y.year} className="border-t border-violet-100 tabular-nums">
+                    <td className="py-1 pr-3">{y.year}{y.months_reported > 0 && y.months_reported < 12 ? <span className="text-slate-400"> ({y.months_reported} mo)</span> : null}</td>
+                    <td className="py-1 pr-3 text-right">{fmtInt(y.population)}</td>
+                    <td className="py-1 pr-3 text-right">{fmtInt(y.actual_cases)}</td>
+                    <td className="py-1 pr-3 text-right">{fmtInt(y.nsp_cases)}</td>
+                    <td className={`py-1 text-right ${onTrack === null ? "" : onTrack ? "text-emerald-700" : "text-rose-700"}`}>{fmtInt(y.expected_cases)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <NspMetricColumn label="API" rows={rows} actual={(y) => fmtNum(y.api_actual, 2)} target={(y) => fmtNum(y.nsp_api, 2)} />
+          <NspMetricColumn label="ABER" rows={rows} actual={(y) => (y.aber_actual_pct === null ? "—" : `${fmtNum(y.aber_actual_pct, 1)}%`)} target={(y) => (y.nsp_aber_pct === null ? "—" : `${fmtNum(y.nsp_aber_pct, 1)}%`)} />
+          <NspMetricColumn label="Tests" rows={rows} actual={(y) => fmtInt(y.actual_tests)} target={(y) => fmtInt(y.nsp_tests)} />
+          <NspMetricColumn label="Deaths" danger rows={rows} actual={(y) => fmtInt(y.actual_deaths)} target={(y) => fmtNum(y.nsp_deaths, 1)} />
+        </div>
       </div>
       <ul className="list-disc space-y-0.5 pl-5 text-[11px] text-slate-600">
         {Object.values(body.notes ?? {}).map((n) => <li key={n}>{n}</li>)}
         <li>* Expected = actual reported cases + model forecast for the rest of that year (green = at or below the NSP target, red = above).</li>
       </ul>
     </PopoutCard>
+  );
+}
+
+/** One metric's Actual/Target pair, stacked per year — the compact alternative to a 13-column table. */
+function NspMetricColumn({
+  label,
+  rows,
+  actual,
+  target,
+  danger = false,
+}: {
+  label: string;
+  rows: NspYear[];
+  actual: (y: NspYear) => string;
+  target: (y: NspYear) => string;
+  danger?: boolean;
+}) {
+  return (
+    <div>
+      <h4 className={`text-xs font-semibold uppercase tracking-wide ${danger ? "text-red-700" : "text-slate-600"}`}>{label}</h4>
+      <ul className="mt-1.5 space-y-2">
+        {rows.map((y) => (
+          <li key={y.year} className="text-xs tabular-nums">
+            <div className="text-[10px] text-slate-400">{y.year}</div>
+            <div className={danger ? "font-medium text-red-700" : "text-slate-800"}>Actual: {actual(y)}</div>
+            <div className="text-slate-500">Target: {target(y)}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
