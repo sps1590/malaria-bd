@@ -102,18 +102,30 @@ function readStoredLayouts(): ResponsiveLayouts {
 
 const round2 = (v: number | null) => (v === null ? null : Math.round(v * 100) / 100);
 
+const LEGEND_FMT = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
+// Rates from fewer tests than this are ranked last in the area table (e.g. 3 tests → TPR 100%).
+const MIN_TESTS_FOR_RANKING = 50;
+
+/** Quantile upper bounds over distinct values; fewer classes when there are few areas. */
 function quantileBreaks(values: number[], classes = PALETTE.length): number[] {
-  if (!values.length) return [];
-  const sorted = [...values].sort((a, b) => a - b);
-  return Array.from({ length: classes - 1 }, (_, i) =>
-    sorted[Math.min(sorted.length - 1, Math.floor(((i + 1) * sorted.length) / classes))],
-  );
+  const unique = [...new Set(values)].sort((a, b) => a - b);
+  if (unique.length < 2) return [];
+  const n = Math.min(classes, unique.length);
+  const breaks: number[] = [];
+  for (let i = 1; i < n; i++) breaks.push(unique[Math.floor((i * unique.length) / n) - 1]);
+  return [...new Set(breaks)];
 }
+
+/** Spread the classes in use across the whole palette, light → dark. */
+const paletteAt = (index: number, breakCount: number) =>
+  PALETTE[breakCount ? Math.round((index * (PALETTE.length - 1)) / breakCount) : 0];
 
 function colorFor(value: number | null, breaks: number[]): string {
   if (value === null) return NO_DATA;
-  return PALETTE[breaks.filter((b) => value > b).length];
+  return paletteAt(breaks.filter((b) => value > b).length, breaks.length);
 }
+
+const isReliable = (s: AreaStat, metric: MeasureKey) => !isIndicator(metric) || s.totals.tests >= MIN_TESTS_FOR_RANKING;
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
@@ -149,19 +161,17 @@ function Widget({ title, actions, children }: { title: string; actions?: ReactNo
 }
 
 function MapLegend({ breaks, metric }: { breaks: number[]; metric: MeasureKey }) {
-  const items = breaks.length
-    ? PALETTE.map((color, i) => {
-        const lo = i === 0 ? null : breaks[i - 1];
-        const hi = i < breaks.length ? breaks[i] : null;
-        const text =
-          lo === null
-            ? `≤ ${formatMeasure(metric, hi)}`
-            : hi === null
-              ? `> ${formatMeasure(metric, lo)}`
-              : `${formatMeasure(metric, lo)} – ${formatMeasure(metric, hi)}`;
-        return { color, text };
-      })
-    : [];
+  const items = Array.from({ length: breaks.length ? breaks.length + 1 : 0 }, (_, i) => {
+    const lo = i === 0 ? null : breaks[i - 1];
+    const hi = i < breaks.length ? breaks[i] : null;
+    const text =
+      lo === null
+        ? `≤ ${LEGEND_FMT.format(hi ?? 0)}`
+        : hi === null
+          ? `> ${LEGEND_FMT.format(lo)}`
+          : `${LEGEND_FMT.format(lo)} – ${LEGEND_FMT.format(hi)}`;
+    return { color: paletteAt(i, breaks.length), text };
+  });
   return (
     <div className="pointer-events-none absolute bottom-2 left-2 z-[1000] rounded bg-white/90 p-2 text-[11px] shadow">
       <div className="mb-1 font-semibold text-slate-700">{measureLabel(metric)}</div>
@@ -413,9 +423,13 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
   const topAreas = useMemo(
     () =>
       [...areaStats.values()]
-        .sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity))
+        .sort(
+          (a, b) =>
+            Number(isReliable(b, metric)) - Number(isReliable(a, metric)) ||
+            (b.value ?? -Infinity) - (a.value ?? -Infinity),
+        )
         .slice(0, 15),
-    [areaStats],
+    [areaStats, metric],
   );
 
   const drill = useCallback((name: string) => {
@@ -611,7 +625,14 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
                           onClick={level === "upazila" ? undefined : () => drill(s.label)}
                           className={`border-t border-slate-100 ${level === "upazila" ? "" : "cursor-pointer hover:bg-sky-50"}`}
                         >
-                          <td className="truncate py-1 pr-2">{s.label}</td>
+                          <td className="truncate py-1 pr-2">
+                            {s.label}
+                            {!isReliable(s, metric) && (
+                              <span className="ml-1 text-[10px] text-amber-700" title={`Fewer than ${MIN_TESTS_FOR_RANKING} tests`}>
+                                low tests
+                              </span>
+                            )}
+                          </td>
                           <td className="py-1 pr-2 text-right tabular-nums">{formatMeasure("cases", s.totals.cases)}</td>
                           <td className="py-1 pr-2 text-right tabular-nums">{formatMeasure("tpr", measureValue(s.totals, "tpr"))}</td>
                           <td className="py-1 text-right font-semibold tabular-nums">{formatMeasure(metric, s.value)}</td>
