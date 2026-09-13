@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DownloadImageButton } from "@/components/ChartTools";
 import {
   Area,
   Bar,
@@ -36,6 +37,7 @@ interface ForecastResponse {
   history?: { year: number; month: number; cases: number; deaths: number }[];
   cases?: TargetData;
   deaths?: TargetData;
+  live?: { target: string; horizon: number; months: number; accuracy_pct: number | null; mae: number }[];
   error?: string;
 }
 interface ClimateResponse {
@@ -196,6 +198,33 @@ export default function ForecastTab() {
         </ComposedChart>
       </ChartCard>
 
+      <section className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+        <h3 className="text-sm font-semibold text-slate-800">Forecasts vs real data — live tracking</h3>
+        {data.live?.length ? (
+          <table className="mt-2 text-xs">
+            <thead className="text-left text-slate-500">
+              <tr><th className="py-1 pr-6 font-medium">Target</th><th className="py-1 pr-6 font-medium">Months ahead</th><th className="py-1 pr-6 text-right font-medium">Months compared</th><th className="py-1 pr-6 text-right font-medium">Real accuracy</th><th className="py-1 text-right font-medium">Mean abs. error</th></tr>
+            </thead>
+            <tbody>
+              {data.live.map((l) => (
+                <tr key={`${l.target}-${l.horizon}`} className="border-t border-emerald-100 tabular-nums">
+                  <td className="py-1 pr-6">{l.target}</td>
+                  <td className="py-1 pr-6">{l.horizon}</td>
+                  <td className="py-1 pr-6 text-right">{l.months}</td>
+                  <td className="py-1 pr-6 text-right font-semibold">{l.accuracy_pct === null ? "—" : `${l.accuracy_pct}%`}</td>
+                  <td className="py-1 text-right">{fmtNum(l.mae, l.target === "deaths" ? 2 : 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="mt-1 text-xs text-slate-600">
+            Tracking is on: every forecast is archived with the data month it was made from. When the MIS reports those months, the real error % appears
+            here automatically, and each daily retrain re-tests all models on the newest data and switches to whichever is now most accurate.
+          </p>
+        )}
+      </section>
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <ChartCard title="Deaths — actual and expected" height={260}
           note={deathRun ? `${MODEL_LABEL[deathRun.model] ?? deathRun.model}. ${deathRun.notes}` : undefined}>
@@ -206,13 +235,13 @@ export default function ForecastTab() {
             <Tooltip formatter={tooltipValue} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Area dataKey="band80" name="80% range" stroke="none" fill={SERIES[1]} fillOpacity={0.22} isAnimationActive={false} />
-            <Bar dataKey="actual" name="Reported deaths" fill={SERIES[0]} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-            <Line dataKey="forecast" name="Expected deaths" stroke={SERIES[1]} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} isAnimationActive={false} />
+            <Bar dataKey="actual" name="Reported deaths" fill="#c81e1e" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Line dataKey="forecast" name="Expected deaths" stroke="#c81e1e" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} isAnimationActive={false} />
           </ComposedChart>
         </ChartCard>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="mb-2 text-sm font-semibold text-slate-800">Forecast table</h3>
+          <h3 className="mb-2 text-sm font-semibold text-slate-800">Forecast table — next {(data.cases?.forecast ?? []).length} months</h3>
           <table className="min-w-full text-sm">
             <thead className="text-left text-xs text-slate-500">
               <tr><th className="py-1 font-medium">Month</th><th className="py-1 text-right font-medium">Cases (80% range)</th><th className="py-1 text-right font-medium">Deaths (80% range)</th></tr>
@@ -339,9 +368,13 @@ function Metric({ value, label }: { value: string; label: string }) {
 }
 
 function ChartCard({ title, height, note, children }: { title: string; height: number; note?: string; children: React.ReactElement }) {
+  const ref = useRef<HTMLElement>(null);
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h3 className="mb-2 text-sm font-semibold text-slate-800">{title}</h3>
+    <section ref={ref} className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+        <DownloadImageButton target={ref} filename={title} />
+      </div>
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
       </div>

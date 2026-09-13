@@ -11,9 +11,9 @@ Next.js 16 (App Router, React 19, TypeScript, Tailwind v4) · PostgreSQL · Pyth
 | --- | --- |
 | **Command Center** | Last-12-month cases (with change), deaths, test positivity, active upazilas, next-month forecast, top districts, latest alerts |
 | **Epidemiology** | WHO endemic channel with epidemic threshold (mean + 2 SD), species trend, age/sex/pregnancy, active vs passive detection, severity/treatment/referral, reporting completeness, persistent hotspots |
-| **Forecast & Climate** | 6-month case and death forecasts with 80%/95% ranges, back-test vs actual, the selected model and its **measured** accuracy, full model comparison, ERA5 climate panels and lagged climate–malaria correlations |
-| **BI & GIS Map** | Drag-and-drop dashboard; Division → District → Upazila choropleth (dropdowns, click-to-drill, “Up”); red is reserved for areas with **100+ cases** |
-| **Pivot Analysis** | Excel-style cross-tabulation with API/TPR/ABER/CFR, virtualized grid, `.xlsx`/`.pdf` export |
+| **Forecast & Climate** | 18-month case and death forecasts with 80%/95% ranges, back-test vs actual, the selected model and its **measured** accuracy, full model comparison, live tracking of past forecasts against real data, ERA5 climate panels and lagged climate–malaria correlations |
+| **BI & GIS Map** | Drag-and-drop dashboard; every panel opens larger with Division → District → Upazila drill-down and downloads as PNG; cases/deaths/tests with forecast; map red means **> 1,000 cases** for divisions, **> 500** for districts, **> 200** for upazilas (0 cases ash-grey) |
+| **Pivot Analysis** | Excel-style cross-tabulation with API/TPR/ABER/CFR, month date-range filter, places sorted from most to fewest cases, virtualized grid, `.xlsx`/`.pdf` export |
 | **Alerts** | Every reported death and every sudden surge (district/upazila cases > usual pattern + 50), email preview, delivery status |
 | **AI Analyst** | Chat that answers questions from the warehouse, forecasts, climate data and alerts |
 
@@ -29,6 +29,10 @@ Next.js 16 (App Router, React 19, TypeScript, Tailwind v4) · PostgreSQL · Pyth
 available at that time). The best model per area is kept and its real score is shown:
 **accuracy = 100 × (1 − WAPE)** at 1 and 3 months ahead. Nothing is tuned to hit a target number.
 Deaths are rare, so they are shown as expected counts with Poisson ranges and a mean absolute error.
+
+Every forecast is archived with the data month it was made from (`forecast_archive`). When the MIS later
+reports those months, the Forecast tab shows the real error of those earlier forecasts, and each daily retrain
+re-tests every model on the newest data and switches to whichever is now most accurate.
 
 ### Alert rules
 
@@ -104,6 +108,7 @@ SYNC_BASE_URL=https://YOUR-APP.vercel.app CRON_SECRET=YOUR_SECRET npm run sync
 | `upazila_population` | Denominators for API / ABER (to be loaded) |
 | `weather_district_monthly` | ERA5 monthly climate per district |
 | `forecast_runs`, `forecast_monthly`, `forecast_backtest` | Model runs with accuracy, forecasts, back-test predictions |
+| `forecast_archive` | Every forecast by data vintage, for live accuracy against later real data |
 | `alerts` | Death and surge alerts with email status |
 | `mis_sync_log` | Every sync with counts and errors |
 

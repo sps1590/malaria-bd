@@ -161,8 +161,40 @@ function valueOf(row: PivotRow, vc: ValueColumn): number | null {
   return t ? measureValue(t, vc.measure) : null;
 }
 
-function sortRows(rows: PivotRow[], sort: SortState, dims: DimensionKey[], valueColumns: ValueColumn[]): PivotRow[] {
-  if (!sort) return rows;
+const TIME_DIMS = new Set<DimensionKey>(["year", "quarter", "yearMonth", "month"]);
+
+/**
+ * Default order (no header sort chosen): time dimensions stay chronological; place dimensions go
+ * from the most to the fewest cases (or deaths when deaths is the first value), group by group.
+ */
+function defaultOrder(rows: PivotRow[], dims: DimensionKey[], firstMeasure: MeasureKey | undefined): PivotRow[] {
+  if (!dims.length || dims.every((d) => TIME_DIMS.has(d))) return rows;
+  const basis = firstMeasure === "deaths" ? "deaths" : "cases";
+  const groupTotal = new Map<string, number>();
+  for (const row of rows) {
+    for (let i = 0; i < dims.length; i++) {
+      const key = row.labels.slice(0, i + 1).join(KEY_SEP);
+      groupTotal.set(key, (groupTotal.get(key) ?? 0) + row.total[basis]);
+    }
+  }
+  return [...rows].sort((a, b) => {
+    for (let i = 0; i < dims.length; i++) {
+      if (TIME_DIMS.has(dims[i])) {
+        const c = (DIMENSIONS[dims[i]].compare ?? naturalCompare)(a.labels[i], b.labels[i]);
+        if (c) return c;
+        continue;
+      }
+      const ka = a.labels.slice(0, i + 1).join(KEY_SEP);
+      const kb = b.labels.slice(0, i + 1).join(KEY_SEP);
+      if (ka === kb) continue;
+      return (groupTotal.get(kb) ?? 0) - (groupTotal.get(ka) ?? 0) || naturalCompare(a.labels[i], b.labels[i]);
+    }
+    return 0;
+  });
+}
+
+function sortRows(rows: PivotRow[], sort: SortState, dims: DimensionKey[], valueColumns: ValueColumn[], firstMeasure?: MeasureKey): PivotRow[] {
+  if (!sort) return defaultOrder(rows, dims, firstMeasure);
   const { id, dir } = sort;
   if (id.startsWith("dim:")) {
     const index = Number(id.slice(4));
@@ -295,21 +327,29 @@ function DropZone({
 }
 
 const fileStem = () => `malaria-pivot-${new Date().toISOString().slice(0, 10)}`;
+const periodString = (t: number) => `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
+const periodIndex = (s: string) => {
+  const m = /^(\d{4})-(\d{2})$/.exec(s);
+  return m ? Number(m[1]) * 12 + Number(m[2]) - 1 : null;
+};
 
 /* ------------------------------- Component ------------------------------- */
 
 export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   const records = useMemo(() => decodeDataset(dataset), [dataset]);
   const divisions = useMemo(() => [...new Set(records.map((r) => r.divisionName))].sort(naturalCompare), [records]);
-  const yearSpan = useMemo(() => {
+  const periodBounds = useMemo(() => {
     let lo = Infinity;
     let hi = -Infinity;
     for (const r of records) {
-      if (r.year < lo) lo = r.year;
-      if (r.year > hi) hi = r.year;
+      const t = r.year * 12 + r.month - 1;
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
     }
-    return lo === Infinity ? "—" : `${lo}–${hi}`;
+    return lo === Infinity ? { min: "", max: "" } : { min: periodString(lo), max: periodString(hi) };
   }, [records]);
+  const [monthFrom, setMonthFrom] = useState(periodBounds.min);
+  const [monthTo, setMonthTo] = useState(periodBounds.max);
 
   const [config, setConfig] = useState<PivotConfig>(DEFAULT_CONFIG);
   const [division, setDivision] = useState("");
@@ -317,10 +357,15 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   const [sort, setSort] = useState<SortState>(null);
   const [exporting, setExporting] = useState<"xlsx" | "pdf" | null>(null);
 
-  const filtered = useMemo(
-    () => (division ? records.filter((r) => r.divisionName === division) : records),
-    [records, division],
-  );
+  const filtered = useMemo(() => {
+    const a = periodIndex(monthFrom) ?? -Infinity;
+    const b = periodIndex(monthTo) ?? Infinity;
+    const [from, to] = a <= b ? [a, b] : [b, a];
+    return records.filter((r) => {
+      const t = r.year * 12 + r.month - 1;
+      return t >= from && t <= to && (!division || r.divisionName === division);
+    });
+  }, [records, division, monthFrom, monthTo]);
   const pivot = useMemo(() => buildPivot(filtered, config.rows, config.column), [filtered, config.rows, config.column]);
   const valueColumns = useMemo(
     () => buildValueColumns(pivot.columns, config.values, config.column !== null),
@@ -344,8 +389,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     return { key: "__grand", labels: [], cells, total };
   }, [pivot, visibleRows]);
   const rows = useMemo(
-    () => sortRows(visibleRows, sort, config.rows, valueColumns),
-    [visibleRows, sort, config.rows, valueColumns],
+    () => sortRows(visibleRows, sort, config.rows, valueColumns, config.values[0]),
+    [visibleRows, sort, config.rows, valueColumns, config.values],
   );
 
   const dimCount = Math.max(config.rows.length, 1);
@@ -395,7 +440,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   function describeConfig() {
     const r = config.rows.map((d) => DIMENSIONS[d].label).join(" › ") || "—";
     const c = config.column ? DIMENSIONS[config.column].label : "—";
-    return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Years: ${yearSpan}`;
+    return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Period: ${monthFrom} to ${monthTo}`;
   }
 
   async function exportXlsx() {
@@ -603,6 +648,28 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            From
+            <input type="month" value={monthFrom} min={periodBounds.min} max={periodBounds.max}
+              onChange={(e) => setMonthFrom(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-sm" aria-label="From month" />
+          </label>
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            To
+            <input type="month" value={monthTo} min={periodBounds.min} max={periodBounds.max}
+              onChange={(e) => setMonthTo(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-sm" aria-label="To month" />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              const end = periodIndex(periodBounds.max);
+              if (end === null) return;
+              setMonthFrom(periodString(end - 11));
+              setMonthTo(periodBounds.max);
+            }}
+            className="rounded border border-slate-300 px-2 py-1.5 text-xs hover:bg-slate-50"
+          >
+            Last 12 months
+          </button>
           <input
             type="search"
             value={query}
@@ -617,6 +684,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
               setSort(null);
               setQuery("");
               setDivision("");
+              setMonthFrom(periodBounds.min);
+              setMonthTo(periodBounds.max);
             }}
             className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
           >

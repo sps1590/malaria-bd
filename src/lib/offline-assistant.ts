@@ -53,7 +53,7 @@ function findMonths(question: string): number[] | undefined {
   return months.length ? months : undefined;
 }
 
-const FOOTER = "\n\n_Offline assistant (rule-based). Add an ANTHROPIC_API_KEY to enable the full AI analyst for free-form questions._";
+const FOOTER = "\n\nOffline assistant (rule-based). Add an `ANTHROPIC_API_KEY` to enable the full AI analyst for free-form questions.";
 
 export async function answerOffline(question: string): Promise<string> {
   const q = question.toLowerCase();

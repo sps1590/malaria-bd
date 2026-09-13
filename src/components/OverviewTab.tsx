@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Icon, type IconName } from "@/components/ChartTools";
 import { MODEL_LABEL, SERIES, STATUS, fmtInt, fmtNum } from "@/lib/chart-theme";
 import { MONTHS } from "@/lib/malaria-metrics";
 
@@ -86,13 +87,14 @@ export default function OverviewTab() {
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <HeroTile label="Confirmed cases" value={fmtInt(w.confirmed_cases)}
+          <HeroTile icon="cases" label="Confirmed cases" value={fmtInt(w.confirmed_cases)}
             detail={w.change_pct === null ? "no previous year" : `${decreasing ? "▼" : "▲"} ${fmtNum(Math.abs(w.change_pct))}% vs previous 12 months`}
             detailClass={decreasing ? "text-emerald-300" : "text-rose-300"} />
-          <HeroTile label="Deaths" value={fmtInt(w.deaths)} detail="reported in the last 12 months" />
-          <HeroTile label="Test positivity" value={`${fmtNum(w.tpr_pct, 2)}%`} detail={`${fmtInt(w.tests)} people tested`} />
-          <HeroTile label="Upazilas with cases" value={fmtInt(w.upazilas_with_cases)} detail="reporting units with ≥1 case" />
+          <HeroTile icon="deaths" danger label="Deaths" value={fmtInt(w.deaths)} detail="reported in the last 12 months" />
+          <HeroTile icon="percent" label="Test positivity" value={`${fmtNum(w.tpr_pct, 2)}%`} detail={`${fmtInt(w.tests)} people tested`} />
+          <HeroTile icon="layers" label="Upazilas with cases" value={fmtInt(w.upazilas_with_cases)} detail="reporting units with ≥1 case" />
           <HeroTile
+            icon="activity"
             label={nextCases ? `Forecast · ${MONTHS[nextCases.month - 1]} ${nextCases.year}` : "Forecast"}
             value={nextCases ? `~${fmtInt(nextCases.predicted)}` : "—"}
             detail={nextCases ? `cases (80% range ${fmtInt(nextCases.lo80)}–${fmtInt(nextCases.hi80)})` : "run the forecast pipeline"}
@@ -127,7 +129,7 @@ export default function OverviewTab() {
               <li key={d.district_name} className="text-sm">
                 <div className="flex justify-between gap-2">
                   <span className="truncate text-slate-700">{d.district_name}</span>
-                  <span className="tabular-nums text-slate-900">{fmtInt(d.cases)}{d.deaths ? <span className="ml-1 text-xs text-slate-500">· {d.deaths} deaths</span> : null}</span>
+                  <span className="tabular-nums text-slate-900">{fmtInt(d.cases)}{d.deaths ? <span className="ml-1 text-xs font-semibold text-red-700">· {d.deaths} deaths</span> : null}</span>
                 </div>
                 <div className="mt-0.5 h-1.5 rounded-full bg-slate-100">
                   <div className="h-1.5 rounded-full" style={{ width: `${(d.cases / maxDistrict) * 100}%`, background: SERIES[0] }} />
@@ -176,12 +178,31 @@ export default function OverviewTab() {
   );
 }
 
-function HeroTile({ label, value, detail, detailClass = "text-slate-400" }: { label: string; value: string; detail: string; detailClass?: string }) {
+function HeroTile({
+  icon,
+  label,
+  value,
+  detail,
+  detailClass = "text-slate-400",
+  danger = false,
+}: {
+  icon: IconName;
+  label: string;
+  value: string;
+  detail: string;
+  detailClass?: string;
+  danger?: boolean;
+}) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-indigo-200">{label}</div>
-      <div className="mt-1 text-3xl font-bold">{value}</div>
-      <div className={`mt-0.5 text-xs ${detailClass}`}>{detail}</div>
+    <div className={`rounded-xl border p-4 backdrop-blur ${danger ? "border-red-400/40 bg-red-500/15" : "border-white/10 bg-white/5"}`}>
+      <div className={`flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide ${danger ? "text-red-200" : "text-indigo-200"}`}>
+        <span className={`grid h-7 w-7 place-items-center rounded-full ${danger ? "bg-red-500/30 text-red-100" : "bg-white/10 text-indigo-100"}`}>
+          <Icon name={icon} className="h-4 w-4" />
+        </span>
+        {label}
+      </div>
+      <div className={`mt-2 text-3xl font-bold ${danger ? "text-red-300" : ""}`}>{value}</div>
+      <div className={`mt-0.5 text-xs ${danger ? "text-red-200/80" : detailClass}`}>{detail}</div>
     </div>
   );
 }

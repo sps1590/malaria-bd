@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DownloadImageButton, Icon } from "@/components/ChartTools";
 import {
   Area,
   Bar,
@@ -40,6 +41,7 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
   const [division, setDivision] = useState("");
   const [district, setDistrict] = useState("");
   const [endemic, setEndemic] = useState<EndemicResponse | null>(null);
+  const channelRef = useRef<HTMLElement>(null);
 
   const divisions = useMemo(() => [...new Set(records.map((r) => r.divisionName))].filter((d) => d !== UNASSIGNED_DIVISION).sort(), [records]);
   const districts = useMemo(
@@ -131,10 +133,13 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
         <span className="text-xs text-slate-500">Panels below cover <b>{scopeLabel}</b>, {period} (year range from the header). The endemic channel always uses the latest 6 years.</span>
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <section ref={channelRef} className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-slate-800">Endemic channel — {endemic?.scope ?? scopeLabel}, {endemic?.year}</h3>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              Endemic channel — {endemic?.scope ?? scopeLabel}, {endemic?.year}
+              <DownloadImageButton target={channelRef} filename={`endemic-channel-${scopeLabel}`} />
+            </h3>
             <p className="text-xs text-slate-500">
               Shaded band = interquartile range of monthly cases in {endemic?.baselineYears[0]}–{endemic?.baselineYears[endemic.baselineYears.length - 1]} (WHO quartile method); red line = epidemic threshold (mean + 2 SD).
             </p>
@@ -207,7 +212,7 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
             <Tile label="Male" value={`${fmtNum(percentOf(totals.male, totals.male + totals.female), 0)}%`} detail={`${fmtInt(totals.male)} cases`} />
             <Tile label="Female" value={`${fmtNum(percentOf(totals.female, totals.male + totals.female), 0)}%`} detail={`${fmtInt(totals.female)} cases`} />
             <Tile label="Pregnant women" value={fmtInt(totals.pregnant)} detail="cases" />
-            <Tile label="Deaths" value={fmtInt(totals.deaths)} detail={`CFR ${fmtNum(percentOf(totals.deaths, totals.cases), 2)}%`} />
+            <Tile danger label="Deaths" value={fmtInt(totals.deaths)} detail={`CFR ${fmtNum(percentOf(totals.deaths, totals.cases), 2)}%`} />
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-xs">
@@ -271,9 +276,13 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
 }
 
 function Panel({ title, note, children }: { title: string; note?: string; children: React.ReactElement }) {
+  const ref = useRef<HTMLElement>(null);
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+    <section ref={ref} className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+        <DownloadImageButton target={ref} filename={title} />
+      </div>
       {note && <p className="text-xs text-slate-500">{note}</p>}
       <div className="mt-2 h-64">
         <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
@@ -282,12 +291,15 @@ function Panel({ title, note, children }: { title: string; note?: string; childr
   );
 }
 
-function Tile({ label, value, detail }: { label: string; value: string; detail: string }) {
+function Tile({ label, value, detail, danger = false }: { label: string; value: string; detail: string; danger?: boolean }) {
   return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="text-xl font-bold text-slate-900">{value}</div>
-      <div className="text-xs text-slate-500">{detail}</div>
+    <div className={`rounded-lg border p-3 ${danger ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
+      <div className={`flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide ${danger ? "text-red-700" : "text-slate-500"}`}>
+        {danger && <Icon name="deaths" className="h-3.5 w-3.5" />}
+        {label}
+      </div>
+      <div className={`text-xl font-bold ${danger ? "text-red-700" : "text-slate-900"}`}>{value}</div>
+      <div className={`text-xs ${danger ? "text-red-700/80" : "text-slate-500"}`}>{detail}</div>
     </div>
   );
 }

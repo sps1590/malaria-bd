@@ -44,6 +44,23 @@ export async function GET(request: Request) {
     }),
   ]);
 
+  // Live tracking: archived forecasts made before each month's data existed, compared with what was then reported.
+  const live = (await tableExists(sql, "forecast_archive"))
+    ? await sql<{ target: string; horizon: number; months: number; abs_error: number; actual: number }[]>`
+        WITH actual AS (
+          SELECT report_year::int AS year, report_month::int AS month, sum(cases)::float AS cases, sum(deaths)::float AS deaths
+          FROM mis_monthly WHERE true ${areaFilter(sql, area)}
+          GROUP BY 1, 2
+        )
+        SELECT fa.target, fa.horizon::int AS horizon, count(*)::int AS months,
+               sum(abs(fa.yhat - CASE WHEN fa.target = 'cases' THEN a.cases ELSE a.deaths END))::float AS abs_error,
+               sum(CASE WHEN fa.target = 'cases' THEN a.cases ELSE a.deaths END)::float AS actual
+        FROM forecast_archive fa
+        JOIN actual a ON a.year = fa.year AND a.month = fa.month
+        WHERE fa.level = ${level} AND fa.area_key = ${key} AND fa.horizon <= 3
+        GROUP BY 1, 2 ORDER BY 1, 2`
+    : [];
+
   return Response.json({
     available: true,
     areas,
@@ -51,5 +68,12 @@ export async function GET(request: Request) {
     history: history.slice(-60),
     cases: targets[0],
     deaths: targets[1],
+    live: live.map((l) => ({
+      target: l.target,
+      horizon: l.horizon,
+      months: l.months,
+      accuracy_pct: l.actual > 0 ? Math.round(1000 * (1 - l.abs_error / l.actual)) / 10 : null,
+      mae: l.abs_error / l.months,
+    })),
   });
 }

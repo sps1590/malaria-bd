@@ -71,6 +71,14 @@ DDL = [
         year smallint NOT NULL, month smallint NOT NULL, horizon smallint NOT NULL,
         actual real NOT NULL, predicted real NOT NULL, model text NOT NULL, run_id text NOT NULL,
         PRIMARY KEY (level, area_key, target, horizon, year, month))""",
+    # Every forecast, keyed by the last data month it was made from. When those months are later reported,
+    # the dashboard compares them with reality (live accuracy); each run re-selects the model on the newest data.
+    """CREATE TABLE IF NOT EXISTS forecast_archive (
+        level text NOT NULL, area_key text NOT NULL, target text NOT NULL, train_end text NOT NULL,
+        year smallint NOT NULL, month smallint NOT NULL, horizon smallint NOT NULL,
+        yhat real NOT NULL, lo80 real NOT NULL, hi80 real NOT NULL, model text NOT NULL, run_id text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (level, area_key, target, train_end, year, month))""",
 ]
 
 
@@ -168,7 +176,7 @@ def fit_stat(model: str, y: pd.Series, x: pd.DataFrame | None, origin: int, h: i
     hist = y.loc[:origin].values
     try:
         if model == "seasonal_naive":
-            return np.array([hist[len(hist) - 12 + k] for k in range(h)])
+            return np.array([hist[len(hist) - 12 + (k % 12)] for k in range(h)])
         ly = np.log1p(hist)
         if model == "ets":
             fc = ExponentialSmoothing(ly, trend="add", damped_trend=True, seasonal="add", seasonal_periods=12,
@@ -198,8 +206,9 @@ def panel_features(df: pd.DataFrame, k: int, with_weather: bool) -> pd.DataFrame
     out = pd.DataFrame({"t": df.t, "y": y, "code": df.code, "moy": df.moy})
     for j in range(3):
         out[f"y_o{j}"] = y.shift(k + j)
-    out["y_s12"] = y.shift(12)
-    out["y_s24"] = y.shift(24)
+    seasonal = 12 if k <= 12 else 24  # "same month last year" must already be observed at the origin
+    out["y_s12"] = y.shift(seasonal)
+    out["y_s24"] = y.shift(seasonal + 12)
     out["y_mean3"] = out[["y_o0", "y_o1", "y_o2"]].mean(axis=1)
     out["y_mean12"] = y.shift(k).rolling(12, min_periods=6).mean()
     if with_weather:  # only weather already observed at the forecast origin (no look-ahead)
@@ -310,6 +319,14 @@ def save(con, run_id, s: Series, target, model, metrics, candidates, forecast, b
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             [(s.level, s.key, target, *ym(t), k, a, p, model, run_id) for t, k, a, p in backtest],
         )
+        cur.executemany(
+            """INSERT INTO forecast_archive (level, area_key, target, train_end, year, month, horizon, yhat, lo80, hi80, model, run_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (level, area_key, target, train_end, year, month) DO UPDATE SET
+                 horizon = EXCLUDED.horizon, yhat = EXCLUDED.yhat, lo80 = EXCLUDED.lo80, hi80 = EXCLUDED.hi80,
+                 model = EXCLUDED.model, run_id = EXCLUDED.run_id, created_at = now()""",
+            [(s.level, s.key, target, label(t1), *ym(t), t - t1, vals[0], vals[1], vals[2], model, run_id) for t, vals in forecast],
+        )
 
 
 # ----------------------------------------------------------------------------- main
@@ -318,7 +335,7 @@ def save(con, run_id, s: Series, target, model, metrics, candidates, forecast, b
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--origins", type=int, default=24)
-    parser.add_argument("--horizon", type=int, default=6)
+    parser.add_argument("--horizon", type=int, default=18)
     parser.add_argument("--levels", default="national,division,district")
     parser.add_argument("--min-district-cases", type=int, default=50, help="cases in the last 60 months")
     args = parser.parse_args()
@@ -451,7 +468,8 @@ def main() -> None:
             if dbest == "cases_x_cfr":
                 dhat = yhat * cfr_at(t1)
             elif dbest == "seasonal_mean_3y":
-                dhat = np.array([s.deaths.reindex([t - 12, t - 24, t - 36], fill_value=0).mean() for t in future])
+                dhat = np.array([s.deaths.reindex([u for u in (t - 12 * j for j in range(1, 5)) if u <= t1][:3], fill_value=0).mean()
+                                 for t in future])
             else:
                 dhat = np.full(args.horizon, s.deaths.reindex(range(t1 - 11, t1 + 1), fill_value=0).mean())
             death_forecast = [(t, (float(v), float(poisson.ppf(0.10, v)), float(poisson.ppf(0.90, v)),
