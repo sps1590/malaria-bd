@@ -44,18 +44,40 @@ function findArea(index: AreaIndex, question: string) {
   // otherwise catch ordinary word runs such as "is the api".
   const exactUpazila = (phrase: string) =>
     index.upazilas.some((u) => canonicalGeoName(u.name) === canonicalGeoName(phrase)) ? resolveArea(index, phrase, "upazila") : null;
+  // The loose (consonant-skeleton) upazila match is only tried when the question explicitly says
+  // "upazila"/"thana" — otherwise ordinary words ("trend", "since", "is the api") sound-alike their
+  // way to a real upazila name and hijack an unrelated question.
   return (
     (level ? first((p) => (level === "upazila" ? exactUpazila(p) : resolveArea(index, p, level))) : null) ??
     first((p) => resolveArea(index, p, "division") ?? resolveArea(index, p, "district")) ??
     first(exactUpazila) ??
-    first((p) => resolveArea(index, p, "upazila"))
+    (level === "upazila" ? first((p) => resolveArea(index, p, "upazila")) : null)
   );
 }
 
+/** For "compare X and Y" / "X vs Y" questions: resolve up to two distinct areas, one per side of the split. */
+function findAreas(index: AreaIndex, question: string): ReturnType<typeof findArea>[] {
+  const parts = question.split(/\bversus\b|\bvs\.?\b|\band\b|,/i).map((p) => p.trim()).filter(Boolean);
+  const found: NonNullable<ReturnType<typeof findArea>>[] = [];
+  for (const part of parts) {
+    const area = findArea(index, part);
+    if (area && !found.some((a) => a.label === area.label)) found.push(area);
+  }
+  return found;
+}
+
 function findYears(question: string, lastYear: number): { from?: number; to?: number } {
-  const years = [...question.matchAll(/\b(20\d{2})\b/g)].map((m) => Number(m[1])).sort();
-  if (years.length) return { from: years[0], to: years[years.length - 1] };
   const q = question.toLowerCase();
+  const years = [...question.matchAll(/\b(20\d{2})\b/g)].map((m) => Number(m[1])).sort();
+  if (years.length) {
+    // "since/from/after 2012" (no end year) or "...to date/now/present" means through the latest data,
+    // not a single-year slice — the assistant otherwise misreads "2012 to date" as just 2012.
+    const openEnded = years.length === 1 && (/\b(since|from|after)\b/.test(q) || /\b(to date|till date|to now|until now|to present|so far)\b/.test(q));
+    return { from: years[0], to: openEnded ? lastYear : years[years.length - 1] };
+  }
+  if (/\b(all time|all-time|entire history|since inception|historical(ly)?|full history|since the beginning)\b/.test(q)) {
+    return { from: 2000, to: lastYear };
+  }
   if (/this year|current year/.test(q)) return { from: lastYear, to: lastYear };
   if (/last year|previous year/.test(q)) return { from: lastYear - 1, to: lastYear - 1 };
   const span = q.match(/last (\d+) years/);
@@ -80,6 +102,32 @@ export async function answerOffline(question: string): Promise<string> {
   const { from, to } = findYears(question, lastYear);
   const months = findMonths(question);
   const scopeName = area?.label ?? "Bangladesh";
+
+  if (/\bcompar(e|ing|ison)\b|\bversus\b|\bvs\.?\b/.test(q)) {
+    const areas = findAreas(index, question);
+    if (areas.length >= 2) {
+      const period = to ?? lastYear;
+      const rows = await Promise.all(
+        areas.slice(0, 2).map((a) =>
+          malariaStats({
+            area: a!.district ?? a!.division,
+            level: a!.level === "upazila" ? undefined : a!.level,
+            yearFrom: from ?? period,
+            yearTo: period,
+            months,
+          }),
+        ),
+      );
+      const lines = rows.map((r, i) => {
+        if ("error" in r) return `- **${areas[i]!.label}**: ${r.error}`;
+        const row = r.rows[0];
+        return row
+          ? `- **${areas[i]!.label}**: ${n(row.cases)} cases, ${n(row.deaths)} deaths, ${n(row.tests)} tested, TPR ${n(row.tpr_pct, 2)}%`
+          : `- **${areas[i]!.label}**: no reports for ${r.period}`;
+      });
+      return `**Comparison — ${from && from !== period ? `${from}–${period}` : period}**\n${lines.join("\n")}${FOOTER}`;
+    }
+  }
 
   if (/forecast|predict|projection|next month|next year|future|expect/.test(q)) {
     const target = /death/.test(q) ? "deaths" : "cases";
@@ -155,14 +203,17 @@ Source file: \`${nsp.source}\` (BBS Census 2022 projected; NSP intensified scena
   const ranking = /which|top|highest|most|rank|worst|hotspot|lowest|least/.test(q);
   const rankMetric = /death/.test(q) ? "deaths" : /tpr|positiv/.test(q) ? "tpr_pct" : "cases";
   const trend = /trend|monthly|each month|by month|over time/.test(q);
-  const byYear = /each year|by year|yearly|annual|per year|compare/.test(q);
+  const total = /\btotal\b|\boverall\b|\baltogether\b|\bcombined\b|\bcumulative\b|\bin all\b|\ball[- ]?time\b/.test(q);
+  const byYear = !total && /each year|by year|yearly|annual|per year|compare/.test(q);
   const stats = await malariaStats({
     area: area ? (area.level === "upazila" ? question.match(new RegExp(area.label.split(" ")[0], "i"))?.[0] ?? area.label : area.district ?? area.division) : undefined,
     level: area?.level,
     yearFrom: from ?? (ranking || trend ? lastYear : lastYear),
     yearTo: to ?? lastYear,
     months,
-    groupBy: ranking ? "area" : trend ? "month" : byYear || (from !== undefined && to !== undefined && from !== to) ? "year" : "none",
+    // "total"/"overall" sums the whole range into one row even when it spans several years.
+    // "yearly"/"annual" (byYear) wins over a bare "trend" — "yearly trend" means grouped by year, not by month.
+    groupBy: ranking ? "area" : byYear ? "year" : trend ? "month" : total ? "none" : (from !== undefined && to !== undefined && from !== to) ? "year" : "none",
     rankLevel: /upazila/.test(q) ? "upazila" : /district/.test(q) ? "district" : /division/.test(q) ? "division" : undefined,
     sortBy: rankMetric,
     top: 10,

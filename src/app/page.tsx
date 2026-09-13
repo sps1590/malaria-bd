@@ -7,6 +7,7 @@ import EpiTab from "@/components/EpiTab";
 import ForecastTab from "@/components/ForecastTab";
 import OverviewTab from "@/components/OverviewTab";
 import PivotTab from "@/components/PivotTab";
+import TopBar from "@/components/TopBar";
 import { getSql } from "@/lib/db";
 import { populationSource as populationSourceFile } from "@/lib/nsp";
 import { NUMERIC_FIELDS, type AreaTuple, type MisDataset, type RowTuple } from "@/lib/malaria-metrics";
@@ -119,6 +120,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <header className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 text-white">
+        <TopBar />
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-6 pt-4">
           <div className="flex items-center gap-3">
             <div aria-hidden className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-indigo-500 text-lg font-black">M</div>
