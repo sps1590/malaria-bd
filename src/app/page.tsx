@@ -119,12 +119,12 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   const yearOptions = [...new Set([...(dataset?.years ?? []), ...range(from, to)])].sort((a, b) => a - b);
 
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-900">
+    <main className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-900">
       <header className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 text-white">
         <TopBar />
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-6 pt-4">
           <div className="flex items-center gap-3">
-            <div aria-hidden className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-indigo-500 text-lg font-black">M</div>
+            <div aria-hidden className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 via-blue-500 to-cyan-400 text-lg font-black shadow-[0_0_20px_-6px_rgba(56,189,248,0.7)]">M</div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Malaria MIS Analytics · Bangladesh</h1>
               <p className="text-xs text-indigo-200">NMEP MIS data warehouse · ERA5 climate · forecasting · GIS · alerts · AI analyst</p>
@@ -148,9 +148,9 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
                 <button type="submit" className="rounded bg-indigo-500 px-3 py-1.5 font-medium text-white hover:bg-indigo-400">Apply</button>
               </form>
             )}
-            <div className="flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[11px] shadow-[0_0_12px_-4px_rgba(251,191,36,0.6)]">
-              <span aria-hidden className="text-amber-300">✦</span>
-              <Attribution className="text-amber-100/90" nameClassName="text-amber-300" />
+            <div className="flex items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-[11px] shadow-[0_0_12px_-4px_rgba(34,211,238,0.6)]">
+              <span aria-hidden className="text-cyan-300">✦</span>
+              <Attribution className="text-cyan-100/90" nameClassName="text-cyan-300" />
             </div>
           </div>
         </div>
@@ -200,7 +200,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
       </section>
 
       <footer className="mx-auto flex max-w-[1600px] items-center justify-end gap-1.5 border-t border-slate-200 px-6 py-3 text-xs">
-        <span aria-hidden className="text-amber-500">✦</span>
+        <span aria-hidden className="text-cyan-600">✦</span>
         <Attribution className="text-slate-500" nameClassName="text-indigo-700" />
       </footer>
     </main>

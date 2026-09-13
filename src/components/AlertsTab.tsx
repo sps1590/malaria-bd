@@ -55,7 +55,7 @@ export default function AlertsTab() {
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         <div className="grid gap-3 sm:grid-cols-3">
           <Stat label="Death alerts" value={deaths.length} detail={`${deaths.reduce((s, a) => s + a.observed, 0)} deaths`} tone="red" />
           <Stat label="Surge alerts" value={surges.length} detail="cases > usual + 50" tone="amber" />
@@ -113,7 +113,7 @@ export default function AlertsTab() {
         </PopoutCard>
       </div>
 
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         {!data.emailConfigured && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <h3 className="font-semibold">Turn on email alerts (one-time, ~3 minutes)</h3>

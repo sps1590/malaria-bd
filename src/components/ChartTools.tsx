@@ -218,7 +218,7 @@ export function PopoutCard({
           <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
           {headerExtra}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {actions}
           {!noDownload && <DownloadImageButton target={bodyRef} filename={name} />}
           <IconButton icon="expand" label="Open larger" onClick={() => setExpanded(true)} />

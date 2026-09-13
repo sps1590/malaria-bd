@@ -49,7 +49,7 @@ export default function NspSection({ level, areaName }: { level: string; areaNam
     <PopoutCard
       title={`National Strategic Plan targets vs actual and forecast — ${body.scope}`}
       downloadName={`nsp-targets-${body.scope}`}
-      className="border-violet-200 bg-gradient-to-br from-violet-50 to-white"
+      className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white"
       bodyClassName="space-y-3"
       headerExtra={<p className="text-[11px] text-slate-600">Source file: <b>{body.source}</b></p>}
     >
@@ -106,7 +106,7 @@ export default function NspSection({ level, areaName }: { level: string; areaNam
             {rows.map((y) => {
               const onTrack = y.expected_cases !== null && y.nsp_cases !== null ? y.expected_cases <= y.nsp_cases : null;
               return (
-                <tr key={y.year} className="border-t border-violet-100 tabular-nums align-top">
+                <tr key={y.year} className="border-t border-indigo-100 tabular-nums align-top">
                   <td className="py-1.5 pr-3">{y.year}{y.months_reported > 0 && y.months_reported < 12 ? <span className="text-slate-400"> ({y.months_reported} mo)</span> : null}</td>
                   <td className="py-1.5 pr-3 text-right">{fmtInt(y.population)}</td>
                   <td className="py-1.5 pr-3 text-right">{fmtInt(y.actual_cases)}</td>

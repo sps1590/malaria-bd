@@ -106,11 +106,31 @@ const CASE_BREAKS: Record<GeoLevel, number[]> = {
 };
 const NO_DATA = "#eceae4";
 const DEATH_RED = "#c81e1e";
-const LAYOUT_KEY = "malaria-mis:bi-layouts:v2";
+// v3: earlier versions only defined a "lg" layout and let react-grid-layout auto-generate the
+// others, which copies each item's minW through unchanged — a widget with minW:4 rendered
+// wider than its container at the xxs/xs/sm breakpoints (only 2-6 total columns there), causing
+// horizontal page overflow on tablets and phones. Bumping the key drops any such cached layout.
+const LAYOUT_KEY = "malaria-mis:bi-layouts:v3";
 const LEGEND_FMT = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
 const COUNT_FMT = new Intl.NumberFormat("en-US");
 // Rates from fewer tests than this are ranked last in the area table (e.g. 3 tests → TPR 100%).
 const MIN_TESTS_FOR_RANKING = 50;
+
+const WIDGET_ROW_ORDER: WidgetId[] = ["kpis", "trend", "map", "forecast", "areas", "species"];
+const WIDGET_HEIGHT: Record<WidgetId, number> = { kpis: 4, trend: 8, map: 13, forecast: 10, areas: 9, species: 7 };
+const WIDGET_MIN_HEIGHT: Record<WidgetId, number> = { kpis: 3, trend: 6, map: 8, forecast: 8, areas: 5, species: 5 };
+
+/** Single full-width column, stacked top to bottom — every widget's minW is capped at this
+ * breakpoint's own column count, so it can never render wider than the container. */
+function stackedLayout(cols: number): ResponsiveLayouts["lg"] {
+  let y = 0;
+  return WIDGET_ROW_ORDER.map((i) => {
+    const h = WIDGET_HEIGHT[i];
+    const item = { i, x: 0, y, w: cols, h, minW: Math.min(2, cols), minH: WIDGET_MIN_HEIGHT[i] };
+    y += h;
+    return item;
+  });
+}
 
 const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   lg: [
@@ -121,6 +141,20 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
     { i: "areas", x: 7, y: 19, w: 5, h: 11, minW: 3, minH: 5 },
     { i: "species", x: 0, y: 23, w: 7, h: 7, minW: 4, minH: 5 },
   ],
+  // md keeps the same side-by-side dashboard shape as lg, rescaled to its 10 columns.
+  md: [
+    { i: "kpis", x: 0, y: 0, w: 10, h: 4, minH: 3 },
+    { i: "trend", x: 0, y: 4, w: 6, h: 8, minW: 4, minH: 6 },
+    { i: "map", x: 6, y: 4, w: 4, h: 15, minW: 3, minH: 8 },
+    { i: "forecast", x: 0, y: 12, w: 6, h: 11, minW: 4, minH: 8 },
+    { i: "areas", x: 6, y: 19, w: 4, h: 11, minW: 3, minH: 5 },
+    { i: "species", x: 0, y: 23, w: 6, h: 7, minW: 4, minH: 5 },
+  ],
+  // Below ~1000px (tablet portrait and phones), a side-by-side dashboard has no room left for
+  // charts to be legible — stack everything full-width instead of shrinking columns further.
+  sm: stackedLayout(6),
+  xs: stackedLayout(4),
+  xxs: stackedLayout(2),
 };
 
 function readStoredLayouts(): ResponsiveLayouts {
@@ -334,7 +368,11 @@ function ChoroplethMap({
         const L = (mod as unknown as { default?: Leaflet }).default ?? (mod as Leaflet);
         leafletRef.current = L;
         // Wheel zoom only after a click, so page scrolling over the widget doesn't zoom the map.
-        const map = L.map(el, { center: [23.7, 90.35], zoom: 7, zoomSnap: 0.25, scrollWheelZoom: false });
+        // zoomAnimation off: its cross-fade proxy element can end up transformed to a huge offset
+        // when the map's container is inside a react-grid-layout item (itself positioned via CSS
+        // transform) and gets resized right after mount — that phantom element was widening the
+        // whole page's scrollable area on narrow/responsive layouts even though it renders nothing.
+        const map = L.map(el, { center: [23.7, 90.35], zoom: 7, zoomSnap: 0.25, scrollWheelZoom: false, zoomAnimation: false });
         L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
           opacity: 0.35,
