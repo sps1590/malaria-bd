@@ -8,6 +8,7 @@ import ForecastTab from "@/components/ForecastTab";
 import OverviewTab from "@/components/OverviewTab";
 import PivotTab from "@/components/PivotTab";
 import TopBar from "@/components/TopBar";
+import { Attribution } from "@/components/ChartTools";
 import { getSql } from "@/lib/db";
 import { populationSource as populationSourceFile } from "@/lib/nsp";
 import { NUMERIC_FIELDS, type AreaTuple, type MisDataset, type RowTuple } from "@/lib/malaria-metrics";
@@ -191,6 +192,10 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
           <BiTab key={`${from}-${to}`} dataset={dataset} />
         )}
       </section>
+
+      <footer className="mx-auto max-w-[1600px] px-6 py-3 text-right text-[11px] text-slate-400">
+        <Attribution />
+      </footer>
     </main>
   );
 }

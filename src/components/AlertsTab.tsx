@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PopoutCard } from "@/components/ChartTools";
 import { MONTHS } from "@/lib/malaria-metrics";
 
 interface Alert {
@@ -61,13 +62,15 @@ export default function AlertsTab() {
           <Stat label="Email delivery" value={data.emailConfigured ? "Active" : "Not set up"} detail={data.recipient} tone={data.emailConfigured ? "green" : "slate"} />
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-800">Alert log</h2>
+        <PopoutCard
+          title="Alert log"
+          downloadName="alert-log"
+          headerExtra={
             <p className="text-xs text-slate-500">
               Checked after every daily sync: every reported death in the latest 3 reporting months, and any district or upazila whose monthly cases exceed the median of the same month in the previous 3 years by more than 50.
             </p>
-          </div>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500">
@@ -107,7 +110,7 @@ export default function AlertsTab() {
               </tbody>
             </table>
           </div>
-        </div>
+        </PopoutCard>
       </div>
 
       <div className="space-y-4">
@@ -122,13 +125,17 @@ export default function AlertsTab() {
             </ol>
           </div>
         )}
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-800">Email preview</h3>
-            <p className="truncate text-xs text-slate-500">{data.preview ? data.preview.subject : "No recent alerts to preview."}</p>
-          </div>
-          {data.preview && <iframe title="Alert email preview" sandbox="" srcDoc={data.preview.html} className="h-[520px] w-full bg-white" />}
-        </div>
+        <PopoutCard
+          title="Email preview"
+          noDownload
+          headerExtra={<p className="truncate text-xs text-slate-500">{data.preview ? data.preview.subject : "No recent alerts to preview."}</p>}
+        >
+          {data.preview ? (
+            <iframe title="Alert email preview" sandbox="" srcDoc={data.preview.html} className="h-[520px] w-full bg-white" />
+          ) : (
+            <p className="text-sm text-slate-500">No recent alerts to preview.</p>
+          )}
+        </PopoutCard>
       </div>
     </div>
   );

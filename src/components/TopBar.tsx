@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Attribution } from "@/components/ChartTools";
 
 interface Weather {
   available: boolean;
@@ -11,10 +12,12 @@ interface Weather {
   precip_chance_pct?: number;
 }
 
-const DATE_FMT = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", day: "2-digit", month: "short", year: "numeric" });
-const TIME_FMT = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+// No explicit timeZone — Intl defaults to the viewer's own local time zone, and timeZoneName
+// names it (BST, GMT+6, UTC, ...) rather than assuming everyone is in Bangladesh.
+const DATE_FMT = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+const TIME_FMT = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZoneName: "short" });
 
-/** Live clock (Bangladesh time) + current weather strip shown on every tab. */
+/** Live clock (viewer's local time) + current weather strip shown on every tab. */
 export default function TopBar() {
   // Ticks every second; the server-rendered instant will always differ from the client's, so the
   // date/time spans below carry suppressHydrationWarning rather than deferring the first render.
@@ -52,7 +55,7 @@ export default function TopBar() {
   return (
     <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-5 gap-y-1 border-b border-white/10 px-6 py-1.5 text-xs text-indigo-100">
       {item("📅", "", DATE_FMT.format(now), true)}
-      {item("🕒", "", `${TIME_FMT.format(now)} BST`, true)}
+      {item("🕒", "", TIME_FMT.format(now), true)}
       <span className="hidden h-3 w-px bg-white/15 sm:inline-block" aria-hidden />
       {weather?.available ? (
         <>
@@ -67,6 +70,7 @@ export default function TopBar() {
       ) : (
         <span className="text-indigo-300/70">Loading weather…</span>
       )}
+      <Attribution className="ml-auto text-[11px] text-indigo-300/70" />
     </div>
   );
 }

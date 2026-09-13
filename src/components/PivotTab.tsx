@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Range } from "xlsx";
+import { BUILT_BY } from "@/components/ChartTools";
 import {
   INDICATORS,
   MONTHS,
@@ -52,7 +53,6 @@ const DIMENSIONS: Record<DimensionKey, Dimension> = {
 
 const DIMENSION_KEYS = Object.keys(DIMENSIONS) as DimensionKey[];
 const INDICATOR_KEYS = Object.keys(INDICATORS) as IndicatorKey[];
-const MEASURE_KEYS: MeasureKey[] = [...NUMERIC_FIELDS.map((f) => f.key), ...INDICATOR_KEYS];
 
 const MAX_ROW_FIELDS = 3;
 const ROW_HEIGHT = 32;
@@ -60,7 +60,6 @@ const HEADER_HEIGHT = 52;
 const DIM_WIDTH = 190;
 const VALUE_WIDTH = 124;
 const KEY_SEP = "␟";
-const DRAG_MIME = "application/x-mis-pivot-field";
 
 interface PivotConfig {
   rows: DimensionKey[];
@@ -223,105 +222,95 @@ function applyDrop(cfg: PivotConfig, zone: Zone, field: FieldRef): PivotConfig {
   return { ...cfg, rows: [...rows, field.key], column: cfg.column === field.key ? null : cfg.column };
 }
 
-function readField(e: DragEvent): FieldRef | null {
-  try {
-    const raw = JSON.parse(e.dataTransfer.getData(DRAG_MIME)) as { kind?: unknown; key?: unknown };
-    if (raw.kind === "dimension" && DIMENSION_KEYS.includes(raw.key as DimensionKey)) {
-      return { kind: "dimension", key: raw.key as DimensionKey };
-    }
-    if (raw.kind === "measure" && MEASURE_KEYS.includes(raw.key as MeasureKey)) {
-      return { kind: "measure", key: raw.key as MeasureKey };
-    }
-  } catch {
-    /* not a pivot field */
-  }
-  return null;
-}
-
 /* ------------------------------ UI pieces -------------------------------- */
 
-function FieldChip({
-  field,
-  label,
-  title,
-  tone,
-  onActivate,
-  onRemove,
-}: {
-  field: FieldRef;
-  label: string;
-  title?: string;
-  tone: "dimension" | "count" | "indicator";
-  onActivate?: () => void;
-  onRemove?: () => void;
-}) {
+/** Small removable tag for a field already placed in Rows/Columns/Values. */
+function FieldTag({ label, tone, onRemove }: { label: string; tone: "dimension" | "count" | "indicator"; onRemove: () => void }) {
   const tones = {
     dimension: "border-sky-200 bg-sky-50 text-sky-800",
     count: "border-slate-200 bg-white text-slate-700",
     indicator: "border-emerald-200 bg-emerald-50 text-emerald-800",
   };
   return (
-    <span
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(DRAG_MIME, JSON.stringify(field));
-        e.dataTransfer.effectAllowed = "move";
-      }}
-      title={title}
-      className={`inline-flex cursor-grab items-center gap-1 rounded border px-2 py-1 text-xs font-medium active:cursor-grabbing ${tones[tone]}`}
-    >
-      {onActivate ? (
-        <button type="button" onClick={onActivate} className="text-left">
-          {label}
-        </button>
-      ) : (
-        label
-      )}
-      {onRemove && (
-        <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="ml-1 text-slate-400 hover:text-red-600">
-          ×
-        </button>
-      )}
+    <span className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium ${tones[tone]}`}>
+      {label}
+      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="ml-0.5 text-slate-400 hover:text-red-600">
+        ×
+      </button>
     </span>
   );
 }
 
-function DropZone({
-  zone,
-  title,
+/**
+ * One control in the field bar: shows the fields already assigned as removable tags plus a
+ * "+" button. Clicking "+" pops a list of the fields NOT yet used anywhere else — nothing is
+ * visible until you click, and a field picked for one zone disappears from the other pickers.
+ */
+function FieldPickerGroup({
+  label,
   hint,
-  onDropField,
-  children,
+  tags,
+  options,
+  onAdd,
+  disabled,
 }: {
-  zone: Zone;
-  title: string;
+  label: string;
   hint: string;
-  onDropField: (zone: Zone, field: FieldRef) => void;
-  children: ReactNode;
+  tags: { key: string; label: string; tone: "dimension" | "count" | "indicator"; onRemove: () => void }[];
+  options: { key: string; label: string; title?: string; tone: "dimension" | "count" | "indicator" }[];
+  onAdd: (key: string) => void;
+  disabled?: boolean;
 }) {
-  const [over, setOver] = useState(false);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
   return (
-    <div
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(DRAG_MIME)) {
-          e.preventDefault();
-          setOver(true);
-        }
-      }}
-      onDragLeave={() => setOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(false);
-        const field = readField(e);
-        if (field) onDropField(zone, field);
-      }}
-      className={`min-h-[4.5rem] rounded-lg border-2 border-dashed p-2 transition-colors ${
-        over ? "border-rose-400 bg-rose-50" : "border-slate-200 bg-white"
-      }`}
-    >
-      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-      <div className="flex flex-wrap gap-1.5">{children}</div>
-      <p className="mt-1 text-[11px] text-slate-400">{hint}</p>
+    <div ref={ref} className="relative flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      {tags.map((t) => (
+        <FieldTag key={t.key} label={t.label} tone={t.tone} onRemove={t.onRemove} />
+      ))}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        title={hint}
+        aria-expanded={open}
+        className="rounded border border-dashed border-slate-300 px-2 py-1 text-xs text-slate-500 hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        + Add
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+          {options.length === 0 ? (
+            <p className="p-2 text-xs text-slate-400">No more fields available.</p>
+          ) : (
+            options.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                title={o.title}
+                onClick={() => {
+                  onAdd(o.key);
+                  setOpen(false);
+                }}
+                className={`block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50 ${o.tone === "indicator" ? "text-emerald-800" : o.tone === "dimension" ? "text-sky-800" : "text-slate-700"}`}
+              >
+                {o.label}
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -455,16 +444,26 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       ];
       const header1 = [...dimLabels, ...valueColumns.map((vc) => (crossTab ? vc.group : measureLabel(vc.measure)))];
       const header2 = [...dimLabels.map(() => ""), ...valueColumns.map((vc) => measureLabel(vc.measure))];
-      const aoa = [...(crossTab ? [header1, header2] : [header1]), ...body.map(toCells), toCells(total)];
+      // Two banner rows carry the credit line at the top and bottom of every exported sheet.
+      const bannerRows = 2;
+      const aoa = [
+        [BUILT_BY],
+        [],
+        ...(crossTab ? [header1, header2] : [header1]),
+        ...body.map(toCells),
+        toCells(total),
+        [],
+        [BUILT_BY],
+      ];
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       if (crossTab) {
-        const merges: Range[] = dimLabels.map((_, c) => ({ s: { r: 0, c }, e: { r: 1, c } }));
+        const merges: Range[] = dimLabels.map((_, c) => ({ s: { r: bannerRows, c }, e: { r: bannerRows + 1, c } }));
         let start = 0;
         valueColumns.forEach((vc, i) => {
           const next = valueColumns[i + 1];
           if (!next || next.group !== vc.group) {
-            if (i > start) merges.push({ s: { r: 0, c: dimLabels.length + start }, e: { r: 0, c: dimLabels.length + i } });
+            if (i > start) merges.push({ s: { r: bannerRows, c: dimLabels.length + start }, e: { r: bannerRows, c: dimLabels.length + i } });
             start = i + 1;
           }
         });
@@ -488,10 +487,13 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       const fmt = (e: ExportEntry) => [...e.labels, ...e.values.map((v, i) => formatMeasure(valueColumns[i].measure, v))];
 
       const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: valueColumns.length > 12 ? "a3" : "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       doc.setFontSize(13);
       doc.text("Malaria MIS - Pivot report", 28, 30);
       doc.setFontSize(8);
       doc.text(describeConfig(), 28, 44);
+      doc.text(BUILT_BY, pageWidth - 28, 20, { align: "right" });
 
       autoTable(doc, {
         startY: 54,
@@ -499,13 +501,18 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
         body: body.map(fmt),
         foot: [fmt(total)],
         showFoot: "lastPage",
-        margin: { left: 28, right: 28 },
+        margin: { left: 28, right: 28, bottom: 26 },
         styles: { fontSize: 6.5, cellPadding: 2, overflow: "linebreak" },
         headStyles: { fillColor: [30, 41, 59], halign: "center" },
         footStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: "bold" },
         columnStyles: Object.fromEntries(valueColumns.map((_, i) => [dimLabels.length + i, { halign: "right" as const }])),
         horizontalPageBreak: true,
         horizontalPageBreakRepeat: dimLabels.map((_, i) => i),
+        didDrawPage: () => {
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          doc.text(BUILT_BY, pageWidth - 28, pageHeight - 10, { align: "right" });
+        },
       });
       doc.save(`${fileStem()}.pdf`);
     } finally {
@@ -546,98 +553,59 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     </div>
   );
 
+  // Every dimension is usable in exactly one of Rows / Columns at a time; a measure in exactly one
+  // Values slot. The "+ Add" popovers only ever list what's left, so a field picked for one zone
+  // disappears from the others automatically.
+  const usedDims = new Set<DimensionKey>(config.column ? [...config.rows, config.column] : config.rows);
+  const rowOptions = DIMENSION_KEYS.filter((k) => !usedDims.has(k)).map((k) => ({ key: k, label: DIMENSIONS[k].label, tone: "dimension" as const }));
+  const columnOptions = DIMENSION_KEYS.filter((k) => !config.rows.includes(k) && k !== config.column).map((k) => ({ key: k, label: DIMENSIONS[k].label, tone: "dimension" as const }));
+  const valueOptions = [
+    ...INDICATOR_KEYS.filter((k) => !config.values.includes(k)).map((k) => ({ key: k, label: INDICATORS[k].label, title: INDICATORS[k].formula, tone: "indicator" as const })),
+    ...NUMERIC_FIELDS.filter((f) => !config.values.includes(f.key)).map((f) => ({ key: f.key, label: f.label, tone: "count" as const })),
+  ];
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      {/* Field list */}
-      <aside className="space-y-4 rounded-lg border border-slate-200 bg-white p-3">
-        <div>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Dimensions</h2>
-          <div className="flex flex-wrap gap-1.5">
-            {DIMENSION_KEYS.map((key) => (
-              <FieldChip
-                key={key}
-                field={{ kind: "dimension", key }}
-                label={DIMENSIONS[key].label}
-                tone="dimension"
-                onActivate={() => dropField("rows", { kind: "dimension", key })}
-              />
-            ))}
-          </div>
-        </div>
-        <div>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Indicators</h2>
-          <div className="flex flex-wrap gap-1.5">
-            {INDICATOR_KEYS.map((key) => (
-              <FieldChip
-                key={key}
-                field={{ kind: "measure", key }}
-                label={INDICATORS[key].label}
-                title={INDICATORS[key].formula}
-                tone="indicator"
-                onActivate={() => dropField("values", { kind: "measure", key })}
-              />
-            ))}
-          </div>
-        </div>
-        <div>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Counts</h2>
-          <div className="flex flex-wrap gap-1.5">
-            {NUMERIC_FIELDS.map((f) => (
-              <FieldChip
-                key={f.key}
-                field={{ kind: "measure", key: f.key }}
-                label={f.label}
-                tone="count"
-                onActivate={() => dropField("values", { kind: "measure", key: f.key })}
-              />
-            ))}
-          </div>
-        </div>
-        <p className="text-[11px] leading-relaxed text-slate-400">
-          Drag fields into Rows / Columns / Values, or click to add. API &amp; ABER use population from{" "}
-          <b>{dataset.populationSource ?? "— (population workbook not imported)"}</b>.
-        </p>
-      </aside>
+    <div className="space-y-3">
+      {/* Field configuration — one compact bar; nothing but the current picks is shown until you click "+ Add". */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-200 bg-white p-2.5">
+        <FieldPickerGroup
+          label="Rows"
+          hint={`Nested left → right, max ${MAX_ROW_FIELDS}`}
+          tags={config.rows.map((key) => ({
+            key, label: DIMENSIONS[key].label, tone: "dimension",
+            onRemove: () => setConfig((c) => ({ ...c, rows: c.rows.filter((d) => d !== key) })),
+          }))}
+          options={rowOptions}
+          onAdd={(key) => dropField("rows", { kind: "dimension", key: key as DimensionKey })}
+          disabled={config.rows.length >= MAX_ROW_FIELDS}
+        />
+        <div className="h-6 w-px bg-slate-200" aria-hidden />
+        <FieldPickerGroup
+          label="Columns"
+          hint="One dimension for cross-tab"
+          tags={config.column ? [{ key: config.column, label: DIMENSIONS[config.column].label, tone: "dimension", onRemove: () => setConfig((c) => ({ ...c, column: null })) }] : []}
+          options={columnOptions}
+          onAdd={(key) => dropField("column", { kind: "dimension", key: key as DimensionKey })}
+          disabled={config.column !== null}
+        />
+        <div className="h-6 w-px bg-slate-200" aria-hidden />
+        <FieldPickerGroup
+          label="Values"
+          hint="Counts are summed; indicators derived from sums"
+          tags={config.values.map((key) => ({
+            key, label: isIndicator(key) ? INDICATORS[key].label : measureLabel(key), tone: isIndicator(key) ? "indicator" : "count",
+            onRemove: () => setConfig((c) => ({ ...c, values: c.values.filter((v) => v !== key) })),
+          }))}
+          options={valueOptions}
+          onAdd={(key) => dropField("values", { kind: "measure", key: key as MeasureKey })}
+        />
+        <span className="ml-auto text-[11px] text-slate-400">
+          API &amp; ABER use population from <b>{dataset.populationSource ?? "— (not imported)"}</b>
+        </span>
+      </div>
 
-      <div className="min-w-0 space-y-3">
-        {/* Zones */}
-        <div className="grid gap-3 md:grid-cols-3">
-          <DropZone zone="rows" title={`Rows (max ${MAX_ROW_FIELDS})`} hint="Nested left → right" onDropField={dropField}>
-            {config.rows.map((key) => (
-              <FieldChip
-                key={key}
-                field={{ kind: "dimension", key }}
-                label={DIMENSIONS[key].label}
-                tone="dimension"
-                onRemove={() => setConfig((c) => ({ ...c, rows: c.rows.filter((d) => d !== key) }))}
-              />
-            ))}
-          </DropZone>
-          <DropZone zone="column" title="Columns" hint="One dimension for cross-tab" onDropField={dropField}>
-            {config.column && (
-              <FieldChip
-                field={{ kind: "dimension", key: config.column }}
-                label={DIMENSIONS[config.column].label}
-                tone="dimension"
-                onRemove={() => setConfig((c) => ({ ...c, column: null }))}
-              />
-            )}
-          </DropZone>
-          <DropZone zone="values" title="Values" hint="Counts are summed; indicators derived from sums" onDropField={dropField}>
-            {config.values.map((key) => (
-              <FieldChip
-                key={key}
-                field={{ kind: "measure", key }}
-                label={isIndicator(key) ? INDICATORS[key].label : measureLabel(key)}
-                tone={isIndicator(key) ? "indicator" : "count"}
-                onRemove={() => setConfig((c) => ({ ...c, values: c.values.filter((v) => v !== key) }))}
-              />
-            ))}
-          </DropZone>
-        </div>
-
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm">
           <select
             value={division}
             onChange={(e) => setDivision(e.target.value)}
@@ -783,7 +751,6 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }

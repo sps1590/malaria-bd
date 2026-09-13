@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Icon, type IconName } from "@/components/ChartTools";
+import { Icon, PopoutCard, type IconName } from "@/components/ChartTools";
 import { MODEL_LABEL, SERIES, STATUS, fmtInt, fmtNum } from "@/lib/chart-theme";
 import { MONTHS } from "@/lib/malaria-metrics";
 
@@ -195,12 +195,13 @@ export default function OverviewTab() {
       </div>
 
       {typeof o.population === "object" ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="text-sm font-semibold text-slate-800">Population at risk & National Strategic Plan targets — {o.population.year}</h3>
-            <span className="text-[11px] text-slate-500">Source file: <b>{o.population.source_file}</b></span>
-          </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <PopoutCard
+          title={`Population at risk & National Strategic Plan targets — ${o.population.year}`}
+          downloadName={`population-nsp-${o.population.year}`}
+          className="shadow-sm"
+          actions={<span className="text-[11px] text-slate-500">Source file: <b>{o.population.source_file}</b></span>}
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <MiniStat label="Population at risk" value={fmtInt(o.population.population_at_risk)} detail={`13 districts · country ${fmtInt(o.population.country_population)} (2022)`} />
             <MiniStat label="API · last 12 months" value={fmtNum(o.population.api_last_12_months, 2)} detail="cases per 1,000 at risk" />
             <MiniStat label="ABER · last 12 months" value={`${fmtNum(o.population.aber_last_12_months_pct, 1)}%`} detail="people tested per 100 at risk" />
@@ -210,7 +211,7 @@ export default function OverviewTab() {
             <MiniStat label={`NSP death target ${nspYear?.year ?? ""}`} value={fmtNum(nspYear?.nsp_deaths, 1)} detail={`expected ${fmtNum(nspYear?.expected_deaths, 1)}`} danger />
           </div>
           <p className="mt-2 text-[11px] text-slate-500">{o.population.note} NSP targets are the intensified scenario in the same file.</p>
-        </section>
+        </PopoutCard>
       ) : (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{o.population}</p>
       )}
@@ -259,12 +260,8 @@ function MiniStat({ label, value, detail, tone, danger = false }: { label: strin
 
 function Card({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        {action}
-      </div>
+    <PopoutCard title={title} actions={action} className="shadow-sm">
       {children}
-    </section>
+    </PopoutCard>
   );
 }

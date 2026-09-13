@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { DownloadImageButton } from "@/components/ChartTools";
+import { useEffect, useMemo, useState } from "react";
+import { PopoutCard } from "@/components/ChartTools";
 import NspSection from "@/components/NspSection";
 import {
   Area,
@@ -150,38 +150,43 @@ export default function ForecastTab() {
       </div>
 
       {run && (
-        <section className="grid gap-4 rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Selected model · {data.selected?.area_name}</p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">{MODEL_LABEL[run.model] ?? run.model}</h2>
-            <div className="mt-3 flex flex-wrap gap-6">
-              <Metric value={run.accuracy_pct === null ? "—" : `${run.accuracy_pct}%`} label="1-month-ahead accuracy" />
-              <Metric value={run.accuracy_3m_pct === null ? "—" : `${run.accuracy_3m_pct}%`} label="3-months-ahead accuracy" />
-              <Metric value={fmtNum(run.mae, 0)} label="mean abs. error (cases/month)" />
+        <PopoutCard
+          title={`Selected model · ${data.selected?.area_name}`}
+          downloadName={`forecast-model-${data.selected?.area_name}`}
+          className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white"
+        >
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">{MODEL_LABEL[run.model] ?? run.model}</h2>
+              <div className="mt-3 flex flex-wrap gap-6">
+                <Metric value={run.accuracy_pct === null ? "—" : `${run.accuracy_pct}%`} label="1-month-ahead accuracy" />
+                <Metric value={run.accuracy_3m_pct === null ? "—" : `${run.accuracy_3m_pct}%`} label="3-months-ahead accuracy" />
+                <Metric value={fmtNum(run.mae, 0)} label="mean abs. error (cases/month)" />
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-slate-600">
+                <b>Note:</b> {run.notes} Accuracy is measured honestly on forecasts made only with data available at the time; it is not tuned to a target.
+                Trained on {run.train_start} → {run.train_end}.
+              </p>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-slate-600">
-              <b>Note:</b> {run.notes} Accuracy is measured honestly on forecasts made only with data available at the time; it is not tuned to a target.
-              Trained on {run.train_start} → {run.train_end}.
-            </p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="text-left text-slate-500">
+                  <tr><th className="py-1 pr-3 font-medium">Model compared</th><th className="py-1 pr-3 text-right font-medium">1-month</th><th className="py-1 pr-3 text-right font-medium">3-month</th><th className="py-1 text-right font-medium">MAE</th></tr>
+                </thead>
+                <tbody>
+                  {candidates.map(([name, c]) => (
+                    <tr key={name} className={`border-t border-indigo-100 ${name === run.model ? "font-semibold text-indigo-900" : "text-slate-700"}`}>
+                      <td className="py-1 pr-3">{name === run.model ? "✓ " : ""}{MODEL_LABEL[name] ?? name}</td>
+                      <td className="py-1 pr-3 text-right tabular-nums">{c.accuracy_1m_pct ?? "—"}%</td>
+                      <td className="py-1 pr-3 text-right tabular-nums">{c.accuracy_3m_pct ?? "—"}%</td>
+                      <td className="py-1 text-right tabular-nums">{fmtNum(c.mae_1m, 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead className="text-left text-slate-500">
-                <tr><th className="py-1 pr-3 font-medium">Model compared</th><th className="py-1 pr-3 text-right font-medium">1-month</th><th className="py-1 pr-3 text-right font-medium">3-month</th><th className="py-1 text-right font-medium">MAE</th></tr>
-              </thead>
-              <tbody>
-                {candidates.map(([name, c]) => (
-                  <tr key={name} className={`border-t border-indigo-100 ${name === run.model ? "font-semibold text-indigo-900" : "text-slate-700"}`}>
-                    <td className="py-1 pr-3">{name === run.model ? "✓ " : ""}{MODEL_LABEL[name] ?? name}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{c.accuracy_1m_pct ?? "—"}%</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{c.accuracy_3m_pct ?? "—"}%</td>
-                    <td className="py-1 text-right tabular-nums">{fmtNum(c.mae_1m, 0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        </PopoutCard>
       )}
 
       <ChartCard title={`Confirmed cases — actual, back-tested and forecast (${data.selected?.area_name})`} height={340}>
@@ -199,10 +204,9 @@ export default function ForecastTab() {
         </ComposedChart>
       </ChartCard>
 
-      <section className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
-        <h3 className="text-sm font-semibold text-slate-800">Forecasts vs real data — live tracking</h3>
+      <PopoutCard title="Forecasts vs real data — live tracking" className="border-emerald-200 bg-emerald-50/50" noDownload={!data.live?.length}>
         {data.live?.length ? (
-          <table className="mt-2 text-xs">
+          <table className="text-xs">
             <thead className="text-left text-slate-500">
               <tr><th className="py-1 pr-6 font-medium">Target</th><th className="py-1 pr-6 font-medium">Months ahead</th><th className="py-1 pr-6 text-right font-medium">Months compared</th><th className="py-1 pr-6 text-right font-medium">Real accuracy</th><th className="py-1 text-right font-medium">Mean abs. error</th></tr>
             </thead>
@@ -219,12 +223,12 @@ export default function ForecastTab() {
             </tbody>
           </table>
         ) : (
-          <p className="mt-1 text-xs text-slate-600">
+          <p className="text-xs text-slate-600">
             Tracking is on: every forecast is archived with the data month it was made from. When the MIS reports those months, the real error % appears
             here automatically, and each daily retrain re-tests all models on the newest data and switches to whichever is now most accurate.
           </p>
         )}
-      </section>
+      </PopoutCard>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <ChartCard title="Deaths — actual and expected" height={260}
@@ -241,8 +245,7 @@ export default function ForecastTab() {
           </ComposedChart>
         </ChartCard>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="mb-2 text-sm font-semibold text-slate-800">Forecast table — next {(data.cases?.forecast ?? []).length} months</h3>
+        <PopoutCard title={`Forecast table — next ${(data.cases?.forecast ?? []).length} months`}>
           <table className="min-w-full text-sm">
             <thead className="text-left text-xs text-slate-500">
               <tr><th className="py-1 font-medium">Month</th><th className="py-1 text-right font-medium">Cases (80% range)</th><th className="py-1 text-right font-medium">Deaths (80% range)</th></tr>
@@ -260,7 +263,7 @@ export default function ForecastTab() {
               })}
             </tbody>
           </table>
-        </section>
+        </PopoutCard>
       </div>
 
       {data.selected && <NspSection level={data.selected.level} areaName={data.selected.area_name} />}
@@ -293,11 +296,12 @@ function ClimateSection({ climate }: { climate: ClimateResponse | null }) {
   const rho = (variable: string, lag: number) => results.find((r) => r.variable === variable && r.lag_months === lag)?.spearman_rho ?? null;
 
   return (
-    <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
-      <div>
-        <h3 className="text-sm font-semibold text-slate-800">Climate and malaria — {climate.scope}</h3>
-        <p className="text-xs text-slate-500">{climate.source}. Separate aligned panels (no shared scale); hover to compare months.</p>
-      </div>
+    <PopoutCard
+      title={`Climate and malaria — ${climate.scope}`}
+      downloadName={`climate-${climate.scope}`}
+      bodyClassName="space-y-3"
+      headerExtra={<p className="text-xs text-slate-500">{climate.source}. Separate aligned panels (no shared scale); hover to compare months.</p>}
+    >
       <div className="grid gap-3 md:grid-cols-2">
         {multiples.map((m) => (
           <div key={m.key} className="h-44">
@@ -357,7 +361,7 @@ function ClimateSection({ climate }: { climate: ClimateResponse | null }) {
           <p className="mt-1 text-[11px] text-slate-500">{climate.correlation.method}</p>
         </div>
       )}
-    </section>
+    </PopoutCard>
   );
 }
 
@@ -371,17 +375,16 @@ function Metric({ value, label }: { value: string; label: string }) {
 }
 
 function ChartCard({ title, height, note, children }: { title: string; height: number; note?: string; children: React.ReactElement }) {
-  const ref = useRef<HTMLElement>(null);
   return (
-    <section ref={ref} className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        <DownloadImageButton target={ref} filename={title} />
-      </div>
-      <div style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
-      </div>
-      {note && <p className="mt-2 text-xs text-slate-500">{note}</p>}
-    </section>
+    <PopoutCard title={title}>
+      {(big) => (
+        <>
+          <div style={{ height: big ? "65vh" : height }}>
+            <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+          </div>
+          {note && <p className="mt-2 text-xs text-slate-500">{note}</p>}
+        </>
+      )}
+    </PopoutCard>
   );
 }

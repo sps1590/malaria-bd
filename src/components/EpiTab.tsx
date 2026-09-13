@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { DownloadImageButton, Icon } from "@/components/ChartTools";
+import { useEffect, useMemo, useState } from "react";
+import { Icon, PopoutCard } from "@/components/ChartTools";
 import {
   Area,
   Bar,
@@ -42,7 +42,6 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
   const [division, setDivision] = useState("");
   const [district, setDistrict] = useState("");
   const [endemic, setEndemic] = useState<EndemicResponse | null>(null);
-  const channelRef = useRef<HTMLElement>(null);
 
   const divisions = useMemo(() => [...new Set(records.map((r) => r.divisionName))].filter((d) => d !== UNASSIGNED_DIVISION).sort(), [records]);
   const districts = useMemo(
@@ -136,42 +135,43 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
         <span className="text-xs text-slate-500">Panels below cover <b>{scopeLabel}</b>, {period} (year range from the header). The endemic channel always uses the latest 6 years.</span>
       </div>
 
-      <section ref={channelRef} className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-              Endemic channel — {endemic?.scope ?? scopeLabel}, {endemic?.year}
-              <DownloadImageButton target={channelRef} filename={`endemic-channel-${scopeLabel}`} />
-            </h3>
-            <p className="text-xs text-slate-500">
-              Shaded band = interquartile range of monthly cases in {endemic?.baselineYears[0]}–{endemic?.baselineYears[endemic.baselineYears.length - 1]} (WHO quartile method); red line = epidemic threshold (mean + 2 SD).
-            </p>
-          </div>
-          {aboveThreshold.length > 0 ? (
-            <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-800">
-              ⚠ Above epidemic threshold: {aboveThreshold.map((m) => m.label).join(", ")}
-            </span>
-          ) : endemic ? (
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">✓ No month above the epidemic threshold</span>
-          ) : null}
-        </div>
-        <div className="mt-3 h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={channel} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-              <CartesianGrid vertical={false} stroke={GRID} />
-              <XAxis dataKey="label" tick={axisTick} />
-              <YAxis tick={axisTick} width={48} />
-              <Tooltip formatter={tooltipValue} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area dataKey="band" name="Usual range (Q1–Q3)" stroke="none" fill={SERIES[0]} fillOpacity={0.15} isAnimationActive={false} />
-              <Line dataKey="median" name="Median" stroke="#898781" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line dataKey="threshold" name="Epidemic threshold" stroke={STATUS.critical} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line dataKey="previous" name={`${(endemic?.year ?? 0) - 1}`} stroke={SERIES[1]} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line dataKey="current" name={`${endemic?.year ?? ""}`} stroke={SERIES[0]} strokeWidth={2.5} dot={{ r: 4, stroke: SURFACE, strokeWidth: 2 }} isAnimationActive={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
+      <PopoutCard
+        title={`Endemic channel — ${endemic?.scope ?? scopeLabel}, ${endemic?.year ?? ""}`}
+        downloadName={`endemic-channel-${scopeLabel}`}
+        headerExtra={
+          <p className="text-xs text-slate-500">
+            Shaded band = interquartile range of monthly cases in {endemic?.baselineYears[0]}–{endemic?.baselineYears[endemic.baselineYears.length - 1]} (WHO quartile method); red line = epidemic threshold (mean + 2 SD).
+          </p>
+        }
+      >
+        {(big) => (
+          <>
+            {aboveThreshold.length > 0 ? (
+              <span className="mb-2 inline-block rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-800">
+                ⚠ Above epidemic threshold: {aboveThreshold.map((m) => m.label).join(", ")}
+              </span>
+            ) : endemic ? (
+              <span className="mb-2 inline-block rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">✓ No month above the epidemic threshold</span>
+            ) : null}
+            <div className={big ? "h-[65vh]" : "h-72"}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={channel} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                  <CartesianGrid vertical={false} stroke={GRID} />
+                  <XAxis dataKey="label" tick={axisTick} />
+                  <YAxis tick={axisTick} width={48} />
+                  <Tooltip formatter={tooltipValue} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Area dataKey="band" name="Usual range (Q1–Q3)" stroke="none" fill={SERIES[0]} fillOpacity={0.15} isAnimationActive={false} />
+                  <Line dataKey="median" name="Median" stroke="#898781" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  <Line dataKey="threshold" name="Epidemic threshold" stroke={STATUS.critical} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  <Line dataKey="previous" name={`${(endemic?.year ?? 0) - 1}`} stroke={SERIES[1]} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  <Line dataKey="current" name={`${endemic?.year ?? ""}`} stroke={SERIES[0]} strokeWidth={2.5} dot={{ r: 4, stroke: SURFACE, strokeWidth: 2 }} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        )}
+      </PopoutCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Parasite species by year" note="P. falciparum causes most severe disease; mixed = both species.">
@@ -209,9 +209,8 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
           </BarChart>
         </Panel>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">Who is affected & how cases are managed — {period}</h3>
-          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <PopoutCard title={`Who is affected & how cases are managed — ${period}`}>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Tile label="Male" value={`${fmtNum(percentOf(totals.male, totals.male + totals.female), 0)}%`} detail={`${fmtInt(totals.male)} cases`} />
             <Tile label="Female" value={`${fmtNum(percentOf(totals.female, totals.male + totals.female), 0)}%`} detail={`${fmtInt(totals.female)} cases`} />
             <Tile label="Pregnant women" value={fmtInt(totals.pregnant)} detail="cases" />
@@ -243,7 +242,7 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
               <b>{dataset.populationSource ?? "— (population workbook not imported)"}</b>; areas outside its 77 upazilas show “—”.
             </p>
           </div>
-        </section>
+        </PopoutCard>
 
         <Panel title="Reporting completeness" note="Reporting units (upazilas and facilities) that submitted a monthly MIS report — drops can signal missing data, not fewer cases.">
           <LineChart data={completeness} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -255,10 +254,11 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
           </LineChart>
         </Panel>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">Persistent hotspots — last 24 months</h3>
-          <p className="text-xs text-slate-500">Reporting units ranked by the number of months with at least one case; trend compares the last 12 months with the 12 before.</p>
-          <table className="mt-2 min-w-full text-xs">
+        <PopoutCard
+          title="Persistent hotspots — last 24 months"
+          headerExtra={<p className="text-xs text-slate-500">Reporting units ranked by the number of months with at least one case; trend compares the last 12 months with the 12 before.</p>}
+        >
+          <table className="min-w-full text-xs">
             <thead className="text-left text-slate-500">
               <tr><th className="py-1 font-medium">Area</th><th className="py-1 text-right font-medium">Months with cases</th><th className="py-1 text-right font-medium">Last 12 mo</th><th className="py-1 text-right font-medium">Trend</th></tr>
             </thead>
@@ -278,25 +278,21 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
               })}
             </tbody>
           </table>
-        </section>
+        </PopoutCard>
       </div>
     </div>
   );
 }
 
 function Panel({ title, note, children }: { title: string; note?: string; children: React.ReactElement }) {
-  const ref = useRef<HTMLElement>(null);
   return (
-    <section ref={ref} className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        <DownloadImageButton target={ref} filename={title} />
-      </div>
-      {note && <p className="text-xs text-slate-500">{note}</p>}
-      <div className="mt-2 h-64">
-        <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
-      </div>
-    </section>
+    <PopoutCard title={title} headerExtra={note && <p className="text-xs text-slate-500">{note}</p>}>
+      {(big) => (
+        <div className={big ? "h-[65vh]" : "h-64"}>
+          <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+        </div>
+      )}
+    </PopoutCard>
   );
 }
 

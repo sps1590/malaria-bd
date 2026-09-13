@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { DownloadImageButton } from "@/components/ChartTools";
+import { PopoutCard } from "@/components/ChartTools";
 import { GRID, SERIES, axisTick, fmtInt, fmtNum, tooltipValue } from "@/lib/chart-theme";
 import type { NspYear } from "@/lib/nsp";
 
@@ -18,7 +18,6 @@ interface NspResponse {
 /** NSP targets vs actual vs model forecast for the 13 at-risk districts or one district. */
 export default function NspSection({ level, areaName }: { level: string; areaName: string }) {
   const [data, setData] = useState<{ id: string; body: NspResponse } | null>(null);
-  const ref = useRef<HTMLElement>(null);
   const id = level === "district" ? `district|${areaName}` : level === "national" ? "national" : `other|${areaName}`;
 
   useEffect(() => {
@@ -47,15 +46,13 @@ export default function NspSection({ level, areaName }: { level: string; areaNam
 
   const rows = body.years.filter((y) => y.year >= 2020);
   return (
-    <section ref={ref} className="space-y-3 rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-800">National Strategic Plan targets vs actual and forecast — {body.scope}</h3>
-          <p className="text-[11px] text-slate-600">Source file: <b>{body.source}</b></p>
-        </div>
-        <DownloadImageButton target={ref} filename={`nsp-targets-${body.scope}`} />
-      </div>
-
+    <PopoutCard
+      title={`National Strategic Plan targets vs actual and forecast — ${body.scope}`}
+      downloadName={`nsp-targets-${body.scope}`}
+      className="border-violet-200 bg-gradient-to-br from-violet-50 to-white"
+      bodyClassName="space-y-3"
+      headerExtra={<p className="text-[11px] text-slate-600">Source file: <b>{body.source}</b></p>}
+    >
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="h-64">
           <p className="mb-1 text-xs font-medium text-slate-600">Confirmed cases per year</p>
@@ -135,6 +132,6 @@ export default function NspSection({ level, areaName }: { level: string; areaNam
         {Object.values(body.notes ?? {}).map((n) => <li key={n}>{n}</li>)}
         <li>* Expected = actual reported cases + model forecast for the rest of that year (green = at or below the NSP target, red = above).</li>
       </ul>
-    </section>
+    </PopoutCard>
   );
 }

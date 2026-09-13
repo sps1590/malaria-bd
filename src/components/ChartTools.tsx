@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+
+/* ------------------------------- Attribution ------------------------------ */
+
+export const BUILT_BY = "This system Build by: Md. Shahriar Parvez | MIS/IT Expert | NMEP";
+
+/** Credit line shown in the header/footer of every page and stamped onto every exported file. */
+export function Attribution({ className = "" }: { className?: string }) {
+  return <span className={`whitespace-nowrap ${className}`}>{BUILT_BY}</span>;
+}
 
 /* --------------------------------- Icons --------------------------------- */
 
@@ -83,6 +92,18 @@ export function DownloadImageButton({ target, filename }: { target: RefObject<HT
         const node = target.current;
         if (!node) return;
         setBusy(true);
+        // Stamp the credit line onto the node just for the capture, then remove it — keeps every
+        // PNG export attributed without cluttering the on-screen widget.
+        const stamp = document.createElement("div");
+        stamp.textContent = BUILT_BY;
+        Object.assign(stamp.style, {
+          position: "absolute", right: "6px", bottom: "4px", fontSize: "9px", lineHeight: "1.4",
+          color: "#94a3b8", background: "rgba(255,255,255,0.85)", padding: "1px 6px", borderRadius: "4px",
+          pointerEvents: "none", zIndex: "9999",
+        });
+        const needsRelative = getComputedStyle(node).position === "static";
+        if (needsRelative) node.style.setProperty("position", "relative");
+        node.appendChild(stamp);
         try {
           const { toPng } = await import("html-to-image");
           const url = await toPng(node, {
@@ -99,6 +120,8 @@ export function DownloadImageButton({ target, filename }: { target: RefObject<HT
           console.error("PNG export failed", err);
           window.alert("Could not create the image. Please try again.");
         } finally {
+          stamp.remove();
+          if (needsRelative) node.style.removeProperty("position");
           setBusy(false);
         }
       }}
@@ -137,5 +160,74 @@ export function Modal({ title, onClose, actions, children }: { title: string; on
       </div>
     </div>,
     document.body,
+  );
+}
+
+/* -------------------------------- PopoutCard ------------------------------- */
+
+/**
+ * Standard wrapper for every table/chart block outside the BI tab (which has its own richer,
+ * drag-and-drop Widget): a bordered card with a header carrying a PNG-download button and an
+ * "open larger" button that pops the same content into the full BI-style Modal. Pass a render
+ * function as children when the expanded view should look different (e.g. a taller chart) —
+ * mirrors BiTab's own `body: (big) => …` widgets — or a plain node otherwise.
+ */
+export function PopoutCard({
+  title,
+  downloadName,
+  headerExtra,
+  actions,
+  className = "",
+  bodyClassName = "",
+  noDownload = false,
+  children,
+}: {
+  title: string;
+  downloadName?: string;
+  /** Subtitle/note rendered under the title, on the left. */
+  headerExtra?: ReactNode;
+  /** Extra controls rendered on the right, before the download/expand buttons (e.g. a "See all →" link). */
+  actions?: ReactNode;
+  className?: string;
+  bodyClassName?: string;
+  /** The block has nothing meaningful to rasterize as-is (e.g. a virtualized grid) — hide the download button. */
+  noDownload?: boolean;
+  children: ReactNode | ((expanded: boolean) => ReactNode);
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const modalBodyRef = useRef<HTMLDivElement>(null);
+  const render = (big: boolean) => (typeof children === "function" ? children(big) : children);
+  const name = downloadName ?? title;
+
+  return (
+    <section className={`rounded-xl border border-slate-200 bg-white p-4 ${className}`}>
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+          {headerExtra}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {actions}
+          {!noDownload && <DownloadImageButton target={bodyRef} filename={name} />}
+          <IconButton icon="expand" label="Open larger" onClick={() => setExpanded(true)} />
+        </div>
+      </div>
+      <div ref={bodyRef} className={bodyClassName}>
+        {render(false)}
+      </div>
+
+      {expanded && (
+        <Modal
+          title={title}
+          onClose={() => setExpanded(false)}
+          actions={!noDownload ? <DownloadImageButton target={modalBodyRef} filename={name} /> : undefined}
+        >
+          <div ref={modalBodyRef} className={`h-full bg-white ${bodyClassName}`}>
+            {render(true)}
+          </div>
+        </Modal>
+      )}
+    </section>
   );
 }
