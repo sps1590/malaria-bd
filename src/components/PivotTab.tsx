@@ -8,6 +8,7 @@ import {
   MONTHS,
   NUMERIC_FIELDS,
   addRecord,
+  addTotals,
   decodeDataset,
   emptyTotals,
   formatMeasure,
@@ -325,15 +326,27 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     () => buildValueColumns(pivot.columns, config.values, config.column !== null),
     [pivot.columns, config.values, config.column],
   );
-  const totalRow = useMemo<PivotRow>(
-    () => ({ key: "__grand", labels: [], cells: pivot.columnTotals, total: pivot.grandTotal }),
-    [pivot],
-  );
-  const rows = useMemo(() => {
+  const visibleRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const visible = q ? pivot.rows.filter((r) => r.labels.some((l) => l.toLowerCase().includes(q))) : pivot.rows;
-    return sortRows(visible, sort, config.rows, valueColumns);
-  }, [pivot.rows, query, sort, config.rows, valueColumns]);
+    return q ? pivot.rows.filter((r) => r.labels.some((l) => l.toLowerCase().includes(q))) : pivot.rows;
+  }, [pivot.rows, query]);
+  // Grand total reflects the row filter, like an Excel pivot.
+  const totalRow = useMemo<PivotRow>(() => {
+    if (visibleRows === pivot.rows) {
+      return { key: "__grand", labels: [], cells: pivot.columnTotals, total: pivot.grandTotal };
+    }
+    const cells = new Map<string, Totals>();
+    const total = emptyTotals();
+    for (const row of visibleRows) {
+      addTotals(total, row.total);
+      for (const [key, t] of row.cells) addTotals(getOrCreate(cells, key), t);
+    }
+    return { key: "__grand", labels: [], cells, total };
+  }, [pivot, visibleRows]);
+  const rows = useMemo(
+    () => sortRows(visibleRows, sort, config.rows, valueColumns),
+    [visibleRows, sort, config.rows, valueColumns],
+  );
 
   const dimCount = Math.max(config.rows.length, 1);
   const dimsWidth = dimCount * DIM_WIDTH;

@@ -134,6 +134,15 @@ export function addRecord(t: Totals, r: MisRecord): Totals {
   return t;
 }
 
+export function addTotals(into: Totals, from: Totals): Totals {
+  for (const k of NUMERIC_KEYS) into[k] += from[k];
+  into.rows += from.rows;
+  into.personYears += from.personYears;
+  into.casesWithPop += from.casesWithPop;
+  into.testsWithPop += from.testsWithPop;
+  return into;
+}
+
 export function totalsOf(records: Iterable<MisRecord>): Totals {
   const t = emptyTotals();
   for (const r of records) addRecord(t, r);
