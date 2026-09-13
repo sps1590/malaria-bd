@@ -131,22 +131,28 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
             </div>
           </div>
 
-          {needsData && (
-            <form method="get" className="flex items-end gap-2 text-sm">
-              <input type="hidden" name="tab" value={tab} />
-              {(["from", "to"] as const).map((name) => (
-                <label key={name} className="flex flex-col text-xs font-medium text-indigo-200">
-                  {name === "from" ? "From" : "To"}
-                  <select name={name} defaultValue={name === "from" ? from : to} className="mt-1 rounded border border-white/20 bg-slate-900 px-2 py-1.5 text-sm text-white">
-                    {yearOptions.map((y) => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-              <button type="submit" className="rounded bg-indigo-500 px-3 py-1.5 font-medium text-white hover:bg-indigo-400">Apply</button>
-            </form>
-          )}
+          <div className="ml-auto flex flex-col items-end gap-2">
+            {needsData && (
+              <form method="get" className="flex items-end gap-2 text-sm">
+                <input type="hidden" name="tab" value={tab} />
+                {(["from", "to"] as const).map((name) => (
+                  <label key={name} className="flex flex-col text-xs font-medium text-indigo-200">
+                    {name === "from" ? "From" : "To"}
+                    <select name={name} defaultValue={name === "from" ? from : to} className="mt-1 rounded border border-white/20 bg-slate-900 px-2 py-1.5 text-sm text-white">
+                      {yearOptions.map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+                <button type="submit" className="rounded bg-indigo-500 px-3 py-1.5 font-medium text-white hover:bg-indigo-400">Apply</button>
+              </form>
+            )}
+            <div className="flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[11px] shadow-[0_0_12px_-4px_rgba(251,191,36,0.6)]">
+              <span aria-hidden className="text-amber-300">✦</span>
+              <Attribution className="text-amber-100/90" nameClassName="text-amber-300" />
+            </div>
+          </div>
         </div>
 
         <nav className="mx-auto mt-3 flex max-w-[1600px] gap-1 overflow-x-auto px-6" aria-label="Views">
@@ -193,8 +199,9 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
         )}
       </section>
 
-      <footer className="mx-auto max-w-[1600px] px-6 py-3 text-right text-[11px] text-slate-400">
-        <Attribution />
+      <footer className="mx-auto flex max-w-[1600px] items-center justify-end gap-1.5 border-t border-slate-200 px-6 py-3 text-xs">
+        <span aria-hidden className="text-amber-500">✦</span>
+        <Attribution className="text-slate-500" nameClassName="text-indigo-700" />
       </footer>
     </main>
   );

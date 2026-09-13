@@ -5,11 +5,22 @@ import { createPortal } from "react-dom";
 
 /* ------------------------------- Attribution ------------------------------ */
 
-export const BUILT_BY = "This system Build by: Md. Shahriar Parvez | MIS/IT Expert | NMEP";
+const DEVELOPER_NAME = "Md. Shahriar Parvez";
+const DEVELOPER_ROLE = "MIS/IT Expert | NMEP";
+/** Plain-text form for exported files (PNG stamp, .xlsx banner rows, .pdf header/footer). */
+export const BUILT_BY = `Developed by: ${DEVELOPER_NAME} | ${DEVELOPER_ROLE}`;
 
-/** Credit line shown in the header/footer of every page and stamped onto every exported file. */
-export function Attribution({ className = "" }: { className?: string }) {
-  return <span className={`whitespace-nowrap ${className}`}>{BUILT_BY}</span>;
+/**
+ * Credit line shown in the header/footer of every page and stamped onto every exported file.
+ * The name renders in its own span (via `nameClassName`) so callers can give it an accent color
+ * that actually stands out against their background, rather than one flat, easy-to-miss tone.
+ */
+export function Attribution({ className = "", nameClassName = "" }: { className?: string; nameClassName?: string }) {
+  return (
+    <span className={`whitespace-nowrap ${className}`}>
+      Developed by: <span className={`font-semibold ${nameClassName}`}>{DEVELOPER_NAME}</span> <span className="opacity-80">| {DEVELOPER_ROLE}</span>
+    </span>
+  );
 }
 
 /* --------------------------------- Icons --------------------------------- */

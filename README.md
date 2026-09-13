@@ -19,9 +19,9 @@ Next.js 16 (App Router, React 19, TypeScript, Tailwind v4) · PostgreSQL · Pyth
 
 Every table and chart on every tab — not just BI & GIS Map — can be downloaded as a PNG and opened
 larger in a full-screen view. The header shows a live clock in the viewer's own local time zone plus
-current temperature/rainfall/precipitation chance/humidity for Dhaka, and "This system Build by: Md.
-Shahriar Parvez | MIS/IT Expert | NMEP" is shown top-right of the header, bottom-right of the page
-footer, and stamped into every exported PNG/`.xlsx`/`.pdf`.
+current temperature/rainfall/precipitation chance/humidity for Dhaka, and a "Developed by: Md.
+Shahriar Parvez | MIS/IT Expert | NMEP" credit is shown in an amber badge top-right of the header and
+bottom-right of the page footer, and stamped into every exported PNG/`.xlsx`/`.pdf`.
 
 ### Data flow (daily)
 

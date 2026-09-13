@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Attribution } from "@/components/ChartTools";
 
 interface Weather {
   available: boolean;
@@ -70,7 +69,6 @@ export default function TopBar() {
       ) : (
         <span className="text-indigo-300/70">Loading weather…</span>
       )}
-      <Attribution className="ml-auto text-[11px] text-indigo-300/70" />
     </div>
   );
 }
