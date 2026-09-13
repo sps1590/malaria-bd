@@ -105,17 +105,21 @@ python pipeline/import_quantification.py "C:/path/NSP-BAN quantification_1904202
   `GMAIL_APP_PASSWORD`, `ALERT_EMAIL_TO`).
 - **API and ABER:** come from the imported population workbook (see above).
 
-## Deploy
+## Deploy (live: https://malaria-bd.vercel.app)
 
-1. Create a Postgres database (Neon or Supabase) and copy the pooled connection string.
-2. Import this repository at https://vercel.com/new and add the variables from `.env.example`.
-3. In GitHub → Settings → Secrets and variables → Actions, add `DATABASE_URL` (same value) so the daily
-   weather/forecast pipeline can run.
-4. Trigger the first import once, then run the workflow manually from the Actions tab:
+1. Vercel project `malaria-bd` (region `sin1`) with a Neon database `malaria-bd-db` (Singapore) connected — it
+   provides `DATABASE_URL`.
+2. Add `CRON_SECRET` in Vercel → Settings → Environment Variables, redeploy, then run the cron job once from
+   Vercel → Settings → Cron Jobs → Run (creates tables and loads MIS data).
+3. Put the production `DATABASE_URL` in `.env.production.local` (never committed) and copy the locally prepared
+   population, weather and forecast tables:
 
 ```bash
-SYNC_BASE_URL=https://YOUR-APP.vercel.app CRON_SECRET=YOUR_SECRET npm run sync
+python pipeline/copy_to_production.py
 ```
+
+4. In GitHub → Settings → Secrets and variables → Actions, add `DATABASE_URL` (production value) so the daily
+   weather/forecast pipeline keeps production up to date.
 
 ## Warehouse tables
 
