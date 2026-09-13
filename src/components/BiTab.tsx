@@ -19,7 +19,7 @@ import {
   YAxis,
 } from "recharts";
 import type { FeatureCollection } from "geojson";
-import type { Map as LeafletMap, Path as LeafletPath } from "leaflet";
+import type { LatLngBounds, Map as LeafletMap, Path as LeafletPath } from "leaflet";
 import {
   INDICATORS,
   addRecord,
@@ -196,6 +196,8 @@ function ChoroplethMap({
   const mapRef = useRef<LeafletMap | null>(null);
   const leafletRef = useRef<Leaflet | null>(null);
   const fittedRef = useRef("");
+  const boundsRef = useRef<LatLngBounds | null>(null);
+  const interactedRef = useRef(false);
   const onSelectRef = useRef(onSelect);
   const [ready, setReady] = useState(false);
   const [geo, setGeo] = useState<{ level: GeoLevel; data: FeatureCollection } | null>(null);
@@ -209,26 +211,42 @@ function ChoroplethMap({
   useEffect(() => {
     let disposed = false;
     let observer: ResizeObserver | undefined;
+    let detach: (() => void) | undefined;
     import("leaflet")
       .then((mod) => {
         const el = containerRef.current;
         if (disposed || !el) return;
         const L = (mod as unknown as { default?: Leaflet }).default ?? (mod as Leaflet);
         leafletRef.current = L;
-        const map = L.map(el, { center: [23.7, 90.35], zoom: 7, zoomSnap: 0.25 });
+        // Wheel zoom only after a click, so page scrolling over the widget doesn't zoom the map.
+        const map = L.map(el, { center: [23.7, 90.35], zoom: 7, zoomSnap: 0.25, scrollWheelZoom: false });
         L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
           opacity: 0.35,
           attribution: "&copy; OpenStreetMap contributors · Boundaries: geoBoundaries",
         }).addTo(map);
+        map.on("click", () => map.scrollWheelZoom.enable());
+        map.on("mouseout", () => map.scrollWheelZoom.disable());
         mapRef.current = map;
-        observer = new ResizeObserver(() => map.invalidateSize());
+
+        const markInteracted = () => {
+          interactedRef.current = true;
+        };
+        el.addEventListener("pointerdown", markInteracted);
+        detach = () => el.removeEventListener("pointerdown", markInteracted);
+
+        // Grid widgets resize after mount; keep the current area framed until the user pans/zooms.
+        observer = new ResizeObserver(() => {
+          map.invalidateSize();
+          if (boundsRef.current && !interactedRef.current) map.fitBounds(boundsRef.current, { padding: [12, 12] });
+        });
         observer.observe(el);
         setReady(true);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
     return () => {
       disposed = true;
+      detach?.();
       observer?.disconnect();
       mapRef.current?.remove();
       mapRef.current = null;
@@ -293,7 +311,10 @@ function ChoroplethMap({
 
     const fitKey = `${level}|${parentKey ?? ""}`;
     if (features.length && fittedRef.current !== fitKey) {
-      map.fitBounds(layer.getBounds(), { padding: [12, 12] });
+      boundsRef.current = layer.getBounds();
+      interactedRef.current = false;
+      map.invalidateSize();
+      map.fitBounds(boundsRef.current, { padding: [12, 12] });
       fittedRef.current = fitKey;
     }
     return () => {
