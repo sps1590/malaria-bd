@@ -16,6 +16,7 @@ import {
   type Level,
 } from "@/lib/agent-data";
 import { MONTHS, canonicalGeoName } from "@/lib/malaria-metrics";
+import { nspComparison } from "@/lib/nsp";
 
 const n = (v: number | null | undefined, digits = 0) =>
   v === null || v === undefined ? "—" : v.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -73,6 +74,24 @@ export async function answerOffline(question: string): Promise<string> {
     const run = ("run" in f ? f.run : null) as Record<string, unknown> | null;
     const lines = points.slice(0, 6).map((p) => `- **${MONTHS[Number(p.month) - 1]} ${p.year}**: ~${n(Number(p.predicted))} ${target} (80% range ${n(Number(p.lo80))}–${n(Number(p.hi80))})`);
     return `**${target === "deaths" ? "Death" : "Case"} forecast — ${scopeName}**\n${lines.join("\n")}\n\nModel: **${run?.model ?? "—"}** — ${run?.notes ?? ""}${FOOTER}`;
+  }
+
+  if (/population|nsp|strategic plan|target|\bapi\b|annual parasite|aber|blood examination/.test(q)) {
+    const district = area?.level === "district" ? area.district : undefined;
+    const nsp = await nspComparison({ district });
+    if (!nsp.available) return `${nsp.note}${FOOTER}`;
+    const year = to ?? lastYear;
+    const row = nsp.years.find((y) => y.year === year) ?? nsp.years[nsp.years.length - 1];
+    const pct = (v: number | null) => (v === null ? "—" : `${n(v, 1)}%`);
+    return `**Population, API/ABER and NSP targets — ${nsp.scope}, ${row.year}**
+- Population at risk: **${n(row.population)}**
+- Confirmed cases: **${n(row.actual_cases)}**${row.months_reported < 12 ? ` (${row.months_reported} months reported)` : ""} · NSP target **${n(row.nsp_cases)}** · expected (actual + forecast) **${n(row.expected_cases)}**
+- API: **${n(row.api_actual, 2)}** per 1,000 · NSP target ${n(row.nsp_api, 2)}
+- ABER: **${pct(row.aber_actual_pct)}** · NSP target ${pct(row.nsp_aber_pct)}
+- Tests: ${n(row.actual_tests)} · NSP target ${n(row.nsp_tests)}
+- Deaths: ${n(row.actual_deaths)} · NSP target ${n(row.nsp_deaths, 1)}
+
+Source file: \`${nsp.source}\` (BBS Census 2022 projected; NSP intensified scenario).${FOOTER}`;
   }
 
   if (/alert|surge|spike|outbreak|sudden/.test(q)) {

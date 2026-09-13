@@ -423,6 +423,36 @@ export async function dataOverview() {
     ? await sql`SELECT DISTINCT ON (target) target, model, accuracy_pct, horizon_months, created_at FROM forecast_runs WHERE level = 'national' ORDER BY target, created_at DESC`
     : [];
   const [sync] = await sql`SELECT finished_at FROM mis_sync_log WHERE status = 'success' ORDER BY id DESC LIMIT 1`;
+
+  // Population at risk and last-12-month API/ABER from the imported NSP quantification workbook.
+  let population = null;
+  if (await tableExists(sql, "population_quantification")) {
+    const [meta] = await sql<{ source_file: string; at_risk: number | null; country: number | null }[]>`
+      SELECT q.source_file,
+             max(q.value) FILTER (WHERE q.dataset = 'district_population' AND q.area_label = '13 at-risk districts'
+                                   AND q.indicator = 'population' AND q.year = ${bounds.last_year}) AS at_risk,
+             max(q.value) FILTER (WHERE q.indicator = 'total_country_population') AS country
+      FROM population_quantification q
+      WHERE q.source_file = (SELECT source_file FROM population_quantification ORDER BY imported_at DESC LIMIT 1)
+      GROUP BY q.source_file`;
+    const [rate] = await sql<{ cases: number | null; tests: number | null; person_years: number | null }[]>`
+      SELECT sum(m.cases) FILTER (WHERE p.upazila_id IS NOT NULL)::float AS cases,
+             sum(m.tests) FILTER (WHERE p.upazila_id IS NOT NULL)::float AS tests,
+             (sum(p.population) / 12.0)::float AS person_years
+      FROM mis_monthly m
+      LEFT JOIN upazila_population p ON p.upazila_id = m.upazila_id AND p.year = m.report_year
+      WHERE m.report_year * 12 + m.report_month - 1 > ${latestP - 12}`;
+    const py = rate?.person_years ?? 0;
+    population = {
+      source_file: meta?.source_file ?? null,
+      year: bounds.last_year,
+      population_at_risk: meta?.at_risk ?? null,
+      country_population: meta?.country ?? null,
+      api_last_12_months: py > 0 ? round(((rate?.cases ?? 0) / py) * 1000, 2) : null,
+      aber_last_12_months_pct: py > 0 ? round(((rate?.tests ?? 0) / py) * 100, 2) : null,
+      note: `API and ABER use the population at risk (77 upazilas in 13 districts; BBS Census 2022 projected yearly) from ${meta?.source_file ?? "the imported workbook"}.`,
+    };
+  }
   return {
     data_years: `${bounds.first_year}–${bounds.last_year}`,
     latest_data_month: periodLabel(bounds.latest),
@@ -436,7 +466,7 @@ export async function dataOverview() {
       upazilas_with_cases: windows.upazilas_12m,
     },
     top_districts_last_12_months: top,
-    population_denominators: "Not loaded — API and ABER cannot be computed until upazila_population is filled.",
+    population: population ?? "Not imported — API and ABER need the NSP quantification workbook (python pipeline/import_quantification.py).",
     weather_coverage: weather,
     forecasts: forecast,
     alerts_table: hasAlerts,

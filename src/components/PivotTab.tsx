@@ -594,7 +594,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           </div>
         </div>
         <p className="text-[11px] leading-relaxed text-slate-400">
-          Drag fields into Rows / Columns / Values, or click to add. API &amp; ABER need <code>upazila_population</code>.
+          Drag fields into Rows / Columns / Values, or click to add. API &amp; ABER use population from{" "}
+          <b>{dataset.populationSource ?? "— (population workbook not imported)"}</b>.
         </p>
       </aside>
 

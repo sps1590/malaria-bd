@@ -9,6 +9,7 @@ import {
   malariaStats,
   recentAlerts,
 } from "@/lib/agent-data";
+import { nspComparison } from "@/lib/nsp";
 import { answerOffline } from "@/lib/offline-assistant";
 
 export const maxDuration = 120;
@@ -33,7 +34,10 @@ You answer questions using ONLY the tools, which query the programme's data ware
 - Model forecasts of monthly cases and deaths with back-tested accuracy.
 - Automatic alerts for deaths and sudden case surges.
 
-Definitions: TPR = cases ÷ tested × 100. API (per 1,000) and ABER need population denominators, which are NOT loaded — say so rather than estimating them. Case fatality = deaths ÷ cases × 100. Chattogram = Chittagong (the MIS uses older spellings).
+- Population at risk (BBS Census 2022 for 77 upazilas in 13 districts, projected yearly) and National Strategic Plan targets (cases, API, deaths, ABER, tests, commodities) imported from the NSP quantification workbook.
+
+Definitions: TPR = cases ÷ tested × 100. API = cases per 1,000 population at risk per year; ABER = people tested per 100 population at risk per year — both use the imported population, which covers the 13 at-risk districts only. Case fatality = deaths ÷ cases × 100. Chattogram = Chittagong (the MIS uses older spellings).
+Whenever you use population, API, ABER or NSP targets, name the source workbook file returned by the tools.
 
 How to answer:
 - Call data_overview first when you need to know the latest data month or what exists.
@@ -108,6 +112,13 @@ function buildTools() {
       description: "Lagged (0–3 month) Spearman correlations between monthly malaria cases and rainfall, temperature, humidity, dew point and soil moisture.",
       inputSchema: z.object({ area: z.string().optional(), year_from: z.number().int().optional() }),
       run: async (i) => json(await climateCorrelation({ area: i.area, yearFrom: i.year_from })),
+    }),
+    betaZodTool({
+      name: "population_and_nsp_targets",
+      description:
+        "Population at risk and National Strategic Plan targets vs actual and model forecast, per year (population, cases, API, ABER, tests, deaths) for the 13 at-risk districts or one district, with the source workbook file name.",
+      inputSchema: z.object({ district: z.string().optional().describe("District name; omit for the 13 at-risk districts (NSP national)") }),
+      run: async (i) => json(await nspComparison(i)),
     }),
     betaZodTool({
       name: "recent_alerts",

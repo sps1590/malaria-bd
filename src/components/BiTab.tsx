@@ -955,11 +955,17 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
         </button>
       </div>
 
-      {totals.personYears === 0 && (
-        <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          No population denominators for this scope — API and ABER show “—”. Load rows into <code>upazila_population</code>.
-        </p>
-      )}
+      <p className={`rounded border px-3 py-1.5 text-xs ${totals.personYears === 0 ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-white text-slate-500"}`}>
+        {dataset.populationSource ? (
+          totals.personYears === 0 ? (
+            <>API and ABER show “—” for this selection: population is available for the 77 at-risk upazilas of 13 districts (source: <b>{dataset.populationSource}</b>).</>
+          ) : (
+            <>API and ABER use the population at risk from <b>{dataset.populationSource}</b> (BBS Census 2022, projected yearly).</>
+          )
+        ) : (
+          <>API and ABER need population — import the NSP quantification workbook with <code>python pipeline/import_quantification.py</code>.</>
+        )}
+      </p>
 
       <div ref={containerRef}>
         {mounted && (

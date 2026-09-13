@@ -78,6 +78,24 @@ python pipeline/forecast.py
 The ERA5 backfill (2012 → today, 64 districts) uses Open-Meteo's free tier; it loads malaria-burden
 districts first and stops politely when the free quota is used up — just run it again later.
 
+## Population & National Strategic Plan targets
+
+Import the NSP quantification workbook (population + targets) — re-run whenever a new version arrives:
+
+```bash
+python pipeline/import_quantification.py "C:/path/NSP-BAN quantification_19042026_SV2 (1).xlsx"
+```
+
+- Every relevant sheet (Census 2022 upazila population, district projections 2019–2035, FDMN population,
+  NSP projected cases/API/deaths, ABER and testing targets, ITN and commodity requirements, foci population,
+  case origin, unit costs) is stored in `population_quantification` together with the **file name**.
+- `upazila_population` is derived from it: each of the 77 at-risk upazilas is matched to its MIS reporting unit
+  (new upazilas such as Eidgaon, Guimara and Madhyanagar are added to the unit that reports for them), projected
+  2012–2035 with the workbook's district growth; hospital/CS-office units get 0 so their cases still count for
+  their district.
+- Used in: API and ABER everywhere (Pivot, BI, Epidemiology), the Command Center population & NSP card, the
+  Forecast tab's “NSP targets vs actual and forecast” section, and the AI analyst. Each place names the source file.
+
 ## Optional features
 
 - **AI analyst (Claude):** create a key at console.anthropic.com and set `ANTHROPIC_API_KEY`. Without a key,
@@ -85,8 +103,7 @@ districts first and stops politely when the free quota is used up — just run i
   monthly trends, forecasts, weather, alerts).
 - **Email alerts:** follow the steps on the Alerts tab (Gmail App Password → `GMAIL_USER`,
   `GMAIL_APP_PASSWORD`, `ALERT_EMAIL_TO`).
-- **API and ABER:** need population denominators — insert BBS figures into
-  `upazila_population (upazila_id, year, population)`.
+- **API and ABER:** come from the imported population workbook (see above).
 
 ## Deploy
 
@@ -105,7 +122,8 @@ SYNC_BASE_URL=https://YOUR-APP.vercel.app CRON_SECRET=YOUR_SECRET npm run sync
 | Table | Grain / purpose |
 | --- | --- |
 | `mis_monthly` | Fact table — upazila × month surveillance counts |
-| `upazila_population` | Denominators for API / ABER (to be loaded) |
+| `population_quantification` | Population and NSP quantification workbook, long format with source file name |
+| `upazila_population` | Denominators for API / ABER, derived from the population workbook |
 | `weather_district_monthly` | ERA5 monthly climate per district |
 | `forecast_runs`, `forecast_monthly`, `forecast_backtest` | Model runs with accuracy, forecasts, back-test predictions |
 | `forecast_archive` | Every forecast by data vintage, for live accuracy against later real data |

@@ -21,6 +21,7 @@ import {
   UNASSIGNED_DIVISION,
   decodeDataset,
   groupTotals,
+  measureValue,
   percentOf,
   testPositivityRate,
   totalsOf,
@@ -76,6 +77,8 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
         treated_pct: percentOf(t.treated, t.cases),
         referred_pct: percentOf(t.referred, t.cases),
         tpr: testPositivityRate(t.cases, t.tests),
+        api: measureValue(t, "api"),
+        aber: measureValue(t, "aber"),
         cases: t.cases, deaths: t.deaths,
       }));
   }, [scoped]);
@@ -217,22 +220,28 @@ export default function EpiTab({ dataset }: { dataset: MisDataset }) {
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead className="text-left text-slate-500">
-                <tr><th className="py-1 font-medium">Year</th><th className="py-1 text-right font-medium">Cases</th><th className="py-1 text-right font-medium">TPR</th><th className="py-1 text-right font-medium">Severe</th><th className="py-1 text-right font-medium">Treated</th><th className="py-1 text-right font-medium">Referred</th><th className="py-1 text-right font-medium">Deaths</th></tr>
+                <tr><th className="py-1 font-medium">Year</th><th className="py-1 text-right font-medium">Cases</th><th className="py-1 text-right font-medium">API</th><th className="py-1 text-right font-medium">ABER</th><th className="py-1 text-right font-medium">TPR</th><th className="py-1 text-right font-medium">Severe</th><th className="py-1 text-right font-medium">Treated</th><th className="py-1 text-right font-medium">Referred</th><th className="py-1 text-right font-medium text-red-700">Deaths</th></tr>
               </thead>
               <tbody>
                 {years.map((y) => (
                   <tr key={y.year} className="border-t border-slate-100 tabular-nums">
                     <td className="py-1">{y.year}</td>
                     <td className="py-1 text-right">{fmtInt(y.cases)}</td>
+                    <td className="py-1 text-right">{fmtNum(y.api, 2)}</td>
+                    <td className="py-1 text-right">{fmtNum(y.aber, 1)}%</td>
                     <td className="py-1 text-right">{fmtNum(y.tpr, 2)}%</td>
                     <td className="py-1 text-right">{fmtNum(y.severe_pct)}%</td>
                     <td className="py-1 text-right">{fmtNum(y.treated_pct)}%</td>
                     <td className="py-1 text-right">{fmtNum(y.referred_pct)}%</td>
-                    <td className="py-1 text-right">{fmtInt(y.deaths)}</td>
+                    <td className={`py-1 text-right ${y.deaths ? "font-semibold text-red-700" : ""}`}>{fmtInt(y.deaths)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <p className="mt-1 text-[11px] text-slate-500">
+              API (per 1,000) and ABER (% tested) use population at risk from{" "}
+              <b>{dataset.populationSource ?? "— (population workbook not imported)"}</b>; areas outside its 77 upazilas show “—”.
+            </p>
           </div>
         </section>
 

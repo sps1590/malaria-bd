@@ -36,12 +36,23 @@ interface OverviewResponse {
       upazilas_with_cases: number;
     };
     top_districts_last_12_months: { district_name: string; division_name: string; cases: number; deaths: number }[];
-    population_denominators: string;
+    population:
+      | {
+          source_file: string | null;
+          year: number;
+          population_at_risk: number | null;
+          country_population: number | null;
+          api_last_12_months: number | null;
+          aber_last_12_months_pct: number | null;
+          note: string;
+        }
+      | string;
     weather_coverage: { districts: number; first_year: number; latest: number } | null;
     last_successful_sync: string | null;
   };
   forecast: { cases: ForecastResult; deaths: ForecastResult };
   alerts: { kind: string; level: string; district_name: string; upazila_name: string | null; report_year: number; report_month: number; observed: number; expected: number | null }[];
+  nsp?: { available: boolean; source?: string; years?: { year: number; nsp_cases: number | null; expected_cases: number | null; nsp_api: number | null; api_actual: number | null; nsp_deaths: number | null; expected_deaths: number | null }[] };
   error?: string;
 }
 
@@ -67,6 +78,8 @@ export default function OverviewTab() {
   const nextDeaths = deaths.available ? deaths.forecast[0] : null;
   const maxDistrict = Math.max(1, ...o.top_districts_last_12_months.map((d) => d.cases));
   const decreasing = (w.change_pct ?? 0) < 0;
+  const populationYear = typeof o.population === "object" ? o.population.year : null;
+  const nspYear = data.nsp?.available ? data.nsp.years?.find((y) => y.year === populationYear) : undefined;
 
   return (
     <div className="space-y-5">
@@ -173,7 +186,26 @@ export default function OverviewTab() {
         ))}
       </div>
 
-      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{o.population_denominators}</p>
+      {typeof o.population === "object" ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-800">Population at risk & National Strategic Plan targets — {o.population.year}</h3>
+            <span className="text-[11px] text-slate-500">Source file: <b>{o.population.source_file}</b></span>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+            <MiniStat label="Population at risk" value={fmtInt(o.population.population_at_risk)} detail={`13 districts · country ${fmtInt(o.population.country_population)} (2022)`} />
+            <MiniStat label="API · last 12 months" value={fmtNum(o.population.api_last_12_months, 2)} detail="cases per 1,000 at risk" />
+            <MiniStat label="ABER · last 12 months" value={`${fmtNum(o.population.aber_last_12_months_pct, 1)}%`} detail="people tested per 100 at risk" />
+            <MiniStat label={`NSP case target ${nspYear?.year ?? ""}`} value={fmtInt(nspYear?.nsp_cases)} detail={`expected ${fmtInt(nspYear?.expected_cases)} (actual + forecast)`}
+              tone={nspYear && nspYear.expected_cases !== null && nspYear.nsp_cases !== null ? (nspYear.expected_cases <= nspYear.nsp_cases ? "good" : "bad") : undefined} />
+            <MiniStat label={`NSP API target ${nspYear?.year ?? ""}`} value={fmtNum(nspYear?.nsp_api, 2)} detail="per 1,000 (13 at-risk districts)" />
+            <MiniStat label={`NSP death target ${nspYear?.year ?? ""}`} value={fmtNum(nspYear?.nsp_deaths, 1)} detail={`expected ${fmtNum(nspYear?.expected_deaths, 1)}`} danger />
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">{o.population.note} NSP targets are the intensified scenario in the same file.</p>
+        </section>
+      ) : (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{o.population}</p>
+      )}
     </div>
   );
 }
@@ -203,6 +235,16 @@ function HeroTile({
       </div>
       <div className={`mt-2 text-3xl font-bold ${danger ? "text-red-300" : ""}`}>{value}</div>
       <div className={`mt-0.5 text-xs ${danger ? "text-red-200/80" : detailClass}`}>{detail}</div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, detail, tone, danger = false }: { label: string; value: string; detail: string; tone?: "good" | "bad"; danger?: boolean }) {
+  return (
+    <div className={`rounded-lg border p-3 ${danger ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
+      <div className={`truncate text-[11px] font-medium uppercase tracking-wide ${danger ? "text-red-700" : "text-slate-500"}`}>{label}</div>
+      <div className={`text-xl font-bold ${danger ? "text-red-700" : "text-slate-900"}`}>{value}</div>
+      <div className={`truncate text-xs ${tone === "good" ? "text-emerald-700" : tone === "bad" ? "text-rose-700" : danger ? "text-red-700/80" : "text-slate-500"}`}>{detail}</div>
     </div>
   );
 }

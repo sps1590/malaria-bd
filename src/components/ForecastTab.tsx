@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DownloadImageButton } from "@/components/ChartTools";
+import NspSection from "@/components/NspSection";
 import {
   Area,
   Bar,
@@ -261,6 +262,8 @@ export default function ForecastTab() {
           </table>
         </section>
       </div>
+
+      {data.selected && <NspSection level={data.selected.level} areaName={data.selected.area_name} />}
 
       <ClimateSection climate={climate} />
     </div>

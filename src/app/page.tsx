@@ -8,6 +8,7 @@ import ForecastTab from "@/components/ForecastTab";
 import OverviewTab from "@/components/OverviewTab";
 import PivotTab from "@/components/PivotTab";
 import { getSql } from "@/lib/db";
+import { populationSource as populationSourceFile } from "@/lib/nsp";
 import { NUMERIC_FIELDS, type AreaTuple, type MisDataset, type RowTuple } from "@/lib/malaria-metrics";
 
 export const metadata: Metadata = {
@@ -48,7 +49,7 @@ type DbArea = {
 
 async function loadDataset(from: number, to: number): Promise<MisDataset> {
   const sql = getSql();
-  const [rows, areas, years, lastSync] = await Promise.all([
+  const [rows, areas, years, lastSync, populationSource] = await Promise.all([
     // Nearest available population year is used as the API/ABER denominator.
     sql<DbRow[]>`
       SELECT m.*, pop.population
@@ -69,6 +70,7 @@ async function loadDataset(from: number, to: number): Promise<MisDataset> {
     sql<{ report_year: number }[]>`SELECT DISTINCT report_year FROM mis_monthly ORDER BY report_year`,
     sql<{ finished_at: Date }[]>`
       SELECT finished_at FROM mis_sync_log WHERE status = 'success' ORDER BY id DESC LIMIT 1`,
+    populationSourceFile(),
   ]);
 
   return {
@@ -82,6 +84,7 @@ async function loadDataset(from: number, to: number): Promise<MisDataset> {
     ]),
     years: years.map((y) => y.report_year),
     syncedAt: lastSync[0]?.finished_at ? new Date(lastSync[0].finished_at).toISOString() : null,
+    populationSource,
   };
 }
 

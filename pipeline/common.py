@@ -39,6 +39,21 @@ def canonical(name: str) -> str:
     return _ALIASES["names"].get(base, base)
 
 
+def upazila_key(name: str) -> str:
+    """Python twin of upazilaMatchKey() in src/lib/malaria-metrics.ts (compare within one district only)."""
+    base = unicodedata.normalize("NFKD", name).lower()
+    base = re.sub(r"\(.*?\)", " ", base)
+    base = re.sub(r"\b(sadar|upazila|upazilla|thana)\b", " ", base)
+    base = re.sub(r"\bsouth\b", "dakshin", base)
+    base = re.sub(r"\bnorth\b", "uttar", base)
+    letters = re.sub(r"[^a-z]", "", base)
+    if not letters:
+        return canonical(name)
+    base = _ALIASES["upazila"].get(letters, letters).replace("ph", "f").replace("z", "j")
+    skeleton = base[0] + re.sub(r"[aeiouhwy]", "", base[1:])
+    return re.sub(r"(.)\1+", r"\1", skeleton)
+
+
 def _polygons(geometry: dict) -> list:
     if geometry["type"] == "Polygon":
         return [geometry["coordinates"]]

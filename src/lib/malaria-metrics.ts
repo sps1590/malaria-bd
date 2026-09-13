@@ -78,6 +78,8 @@ export interface MisDataset {
   rows: RowTuple[];
   years: number[];
   syncedAt: string | null;
+  /** File name of the imported population workbook used for API/ABER denominators. */
+  populationSource?: string | null;
 }
 
 export function decodeDataset(ds: MisDataset): MisRecord[] {
@@ -128,7 +130,9 @@ export function emptyTotals(): Totals {
 export function addRecord(t: Totals, r: MisRecord): Totals {
   for (const k of NUMERIC_KEYS) t[k] += r[k];
   t.rows += 1;
-  if (r.population != null && r.population > 0) {
+  // population 0 = a facility unit (hospital, CS office) inside a covered district: its cases count toward
+  // the district's API numerator without adding people to the denominator.
+  if (r.population != null && r.population >= 0) {
     t.personYears += personYears(r.population, 1);
     t.casesWithPop += r.cases;
     t.testsWithPop += r.tests;

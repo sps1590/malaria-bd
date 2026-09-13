@@ -89,7 +89,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS upazila_population (
     upazila_id integer  NOT NULL,
     year       smallint NOT NULL,
-    population integer  NOT NULL CHECK (population > 0),
+    population integer  NOT NULL CHECK (population >= 0),
     source     text,
     PRIMARY KEY (upazila_id, year)
   )`,
