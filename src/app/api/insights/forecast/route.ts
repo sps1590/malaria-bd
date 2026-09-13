@@ -31,7 +31,8 @@ export async function GET(request: Request) {
       GROUP BY 1, 2 ORDER BY 1, 2`,
     ...(["cases", "deaths"] as const).map(async (target) => {
       const [run] = await sql`
-        SELECT model, accuracy_pct, accuracy_3m_pct, wape, mae, mase, backtest_origins, train_start, train_end, candidates, notes, created_at
+        SELECT model, accuracy_pct, accuracy_3m_pct, wape, mae, mase, backtest_origins, train_start, train_end,
+               (candidates #>> '{}')::jsonb AS candidates, notes, created_at -- tolerates JSON stored as a string
         FROM forecast_runs WHERE level = ${level} AND area_key = ${key} AND target = ${target}
         ORDER BY created_at DESC LIMIT 1`;
       const forecast = await sql`

@@ -132,6 +132,8 @@ export async function POST(request: Request) {
   if (!(await tokenValid(sql, body.token))) return Response.json({ ok: false, error: "Invalid or expired token" }, { status: 401 });
 
   if (body.action === "finish") {
+    // JSON columns arrive as strings; store them as JSON objects.
+    await sql`UPDATE forecast_runs SET candidates = (candidates #>> '{}')::jsonb WHERE jsonb_typeof(candidates) = 'string'`;
     await sql`DELETE FROM seed_session WHERE token = ${body.token} OR expires_at <= now()`;
     return Response.json({ ok: true });
   }

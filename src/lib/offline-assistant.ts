@@ -25,16 +25,31 @@ function findArea(index: AreaIndex, question: string) {
   const q = question.toLowerCase();
   const level: Level | undefined = /\bupazila|upazilla|thana\b/.test(q) ? "upazila" : /\bdistrict|zila\b/.test(q) ? "district" : /\bdivision\b/.test(q) ? "division" : undefined;
   const words = q.replace(/[^a-z\s'-]/g, " ").split(/\s+/).filter(Boolean);
-  // Try the longest word windows first so "cox's bazar" beats "bazar".
+  // Longest word windows first so "cox's bazar" beats "bazar".
+  const phrases: string[] = [];
   for (let size = 3; size >= 1; size--) {
     for (let i = 0; i + size <= words.length; i++) {
       const phrase = words.slice(i, i + size).join(" ");
-      if (canonicalGeoName(phrase).length < 4) continue;
-      const area = resolveArea(index, phrase, level) ?? (level ? resolveArea(index, phrase) : null);
-      if (area) return area;
+      if (canonicalGeoName(phrase).length >= 4) phrases.push(phrase);
     }
   }
-  return null;
+  const first = (resolve: (phrase: string) => ReturnType<typeof resolveArea>) => {
+    for (const phrase of phrases) {
+      const area = resolve(phrase);
+      if (area) return area;
+    }
+    return null;
+  };
+  // Exact division/district/upazila names beat loose (consonant-skeleton) upazila matches, which
+  // otherwise catch ordinary word runs such as "is the api".
+  const exactUpazila = (phrase: string) =>
+    index.upazilas.some((u) => canonicalGeoName(u.name) === canonicalGeoName(phrase)) ? resolveArea(index, phrase, "upazila") : null;
+  return (
+    (level ? first((p) => (level === "upazila" ? exactUpazila(p) : resolveArea(index, p, level))) : null) ??
+    first((p) => resolveArea(index, p, "division") ?? resolveArea(index, p, "district")) ??
+    first(exactUpazila) ??
+    first((p) => resolveArea(index, p, "upazila"))
+  );
 }
 
 function findYears(question: string, lastYear: number): { from?: number; to?: number } {
