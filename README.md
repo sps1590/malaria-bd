@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Malaria MIS Analytics — Bangladesh
 
-## Getting Started
+Next.js 16 (App Router, React 19, TypeScript, Tailwind v4) analytics platform for the
+NMCP malaria MIS feed (`https://lmis.nmcp.gov.bd/admin/mis-api-data`).
 
-First, run the development server:
+- **Daily sync** — Vercel Cron (`vercel.json`) calls `/api/cron/sync-mis` at 03:00 UTC (09:00 BST).
+  The route fetches the feed, validates every row with Zod, and upserts into Postgres.
+- **Pivot tab** — drag-and-drop cross-tabulation (rows × columns × values), virtualized grid,
+  medical indicators (API, TPR, ABER, CFR, Pf share), `.xlsx` and `.pdf` export.
+- **BI tab** — draggable/resizable dashboard (`react-grid-layout`), KPI cards, Recharts time series,
+  and a Leaflet choropleth with Division → District → Upazila drill-down.
+
+## Run locally (Windows, no Docker needed)
+
+Open two terminals in this folder.
+
+Terminal 1 — start the bundled local Postgres (keep it open):
+
+```bash
+npm run db:local
+```
+
+Terminal 2 — start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+First time only, load the MIS data (with the dev server running):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run sync
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Then open http://localhost:3000.
 
-## Learn More
+## Deploy to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+1. Create a Postgres database (Neon or Supabase) and copy its pooled connection string.
+2. Import this GitHub repository at https://vercel.com/new.
+3. Add environment variables in Vercel → Project → Settings → Environment Variables:
+   - `DATABASE_URL` — the connection string (include `?sslmode=require`)
+   - `CRON_SECRET` — any long random string (Vercel Cron sends it automatically)
+4. Deploy, then run the first import once:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+SYNC_BASE_URL=https://YOUR-APP.vercel.app CRON_SECRET=YOUR_SECRET npm run sync
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+After that the cron job keeps the data fresh every day.
 
-## Deploy on Vercel
+## Indicators
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Indicator | Formula |
+| --- | --- |
+| API (per 1,000) | confirmed cases ÷ population-years × 1,000 |
+| TPR (%) | confirmed cases ÷ persons tested × 100 |
+| ABER (%) | persons tested ÷ population-years × 100 |
+| CFR (%) | deaths ÷ confirmed cases × 100 |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Ratios are always computed from summed numerators/denominators, never averaged.
+Each upazila-month contributes population ÷ 12 person-years, so API/ABER are valid for any slice.
+
+**API and ABER need population.** The MIS feed has none — insert BBS figures into
+`upazila_population (upazila_id, year, population)`. The nearest available year is used.
+
+## Project layout
+
+| Path | Purpose |
+| --- | --- |
+| `vercel.json` | Cron schedule |
+| `src/app/api/cron/sync-mis/route.ts` | Fetch → Zod validation → batched upsert, schema bootstrap, sync log |
+| `src/lib/malaria-metrics.ts` | Data model, formulas, district→division map, geo name matching |
+| `src/app/page.tsx` | Server page: loads data for the selected year range, renders the tabs |
+| `src/components/PivotTab.tsx` | Pivot engine + virtualized grid + exports |
+| `src/components/BiTab.tsx` | Dashboard canvas, charts, choropleth map |
+| `scripts/prepare-geo.mjs` | Builds `public/geo/*.geojson` from geoBoundaries |
+| `scripts/local-db.mjs` | Local embedded Postgres for development |
+| `scripts/sync.mjs` | Manually trigger a sync |
+
+## Data sources & licences
+
+- Malaria data: National Malaria Elimination Programme (NMEP/NMCP), Bangladesh LMIS.
+- Administrative boundaries: [geoBoundaries](https://www.geoboundaries.org) gbOpen BGD —
+  ADM1 CC0 1.0; ADM2/ADM3 CC BY 3.0 IGO.
+- Basemap tiles: © OpenStreetMap contributors.
