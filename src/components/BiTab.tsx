@@ -26,6 +26,7 @@ import { DownloadImageButton, Icon, IconButton, Modal, type IconName } from "@/c
 import { GRID, MODEL_LABEL, SERIES, SURFACE, axisTick, tooltipValue } from "@/lib/chart-theme";
 import {
   INDICATORS,
+  MONTHS,
   UNASSIGNED_DIVISION,
   addRecord,
   canonicalGeoName,
@@ -79,7 +80,7 @@ const GEO_LEVELS: Record<GeoLevel, { url: string; nameProp: string; parentProp: 
   upazila: { url: "/geo/bd-upazilas.geojson", nameProp: "ADM3_EN", parentProp: "ADM2_EN", label: "Upazilas" },
 };
 
-const MAP_METRICS: MeasureKey[] = ["cases", "deaths", "tpr", "tests", "api", "aber"];
+const MAP_METRICS: MeasureKey[] = ["cases", "deaths", "tests", "tpr", "pfShare", "api", "aber"];
 const KPI_METRICS: { key: MeasureKey; icon: IconName }[] = [
   { key: "cases", icon: "cases" },
   { key: "deaths", icon: "deaths" },
@@ -467,7 +468,21 @@ interface ForecastApi {
   deaths?: { forecast: ForecastPoint[] };
 }
 
-function ForecastPanel({ area, records, expanded }: { area: { level: string; key: string; label: string }; records: GeoRecord[]; expanded: boolean }) {
+function ForecastPanel({
+  area,
+  records,
+  year,
+  latestYear,
+  upazila,
+}: {
+  area: { level: string; key: string; label: string };
+  records: GeoRecord[];
+  year: number | "all";
+  latestYear: number | null;
+  upazila: string | null;
+}) {
+  // Forecasts exist down to district level and continue from the latest data month.
+  const showForecast = !upazila && (year === "all" || year === latestYear);
   const [result, setResult] = useState<{ id: string; data: ForecastApi | null } | null>(null);
   const id = `${area.level}|${area.key}`;
 
@@ -487,7 +502,8 @@ function ForecastPanel({ area, records, expanded }: { area: { level: string; key
 
   const data = result?.id === id ? result.data : null;
   const rows = useMemo(() => {
-    const monthly = [...groupTotals(records, periodOf)].sort((a, b) => a[0].localeCompare(b[0])).slice(-36);
+    const inPeriod = year === "all" ? records : records.filter((r) => r.year === year);
+    const monthly = [...groupTotals(inPeriod, periodOf)].sort((a, b) => a[0].localeCompare(b[0])).slice(year === "all" ? -36 : 0);
     const out: Record<string, string | number | number[] | null>[] = monthly.map(([period, t]) => ({
       period,
       cases: t.cases,
@@ -496,8 +512,8 @@ function ForecastPanel({ area, records, expanded }: { area: { level: string; key
       tpr: round2(testPositivityRate(t.cases, t.tests)),
     }));
     const last = out[out.length - 1];
-    const cases = data?.cases?.forecast ?? [];
-    const deaths = data?.deaths?.forecast ?? [];
+    const cases = showForecast ? (data?.cases?.forecast ?? []) : [];
+    const deaths = showForecast ? (data?.deaths?.forecast ?? []) : [];
     if (last && cases.length) {
       last.fcCases = last.cases;
       last.band80 = [Number(last.cases), Number(last.cases)];
@@ -510,16 +526,20 @@ function ForecastPanel({ area, records, expanded }: { area: { level: string; key
       out.push({ period, fcCases: Math.round(f.yhat), band80: [Math.round(f.lo80), Math.round(f.hi80)], fcDeaths: deaths[i] ? Math.round(deaths[i].yhat * 10) / 10 : null });
     });
     return out;
-  }, [records, data]);
+  }, [records, data, year, showForecast]);
 
   const run = data?.cases?.run;
   const chartMargin = { top: 4, right: 8, bottom: 0, left: 0 };
-  const panelClass = expanded ? "min-h-0 flex-1" : "min-h-0 flex-1";
+  const panelClass = "min-h-0 flex-1";
 
   return (
     <div className="flex h-full flex-col gap-1">
       <p className="text-[11px] text-slate-500">
-        {run
+        {upazila
+          ? <>Actual data for <b>{upazila}</b>. Forecasts are made for Bangladesh, divisions and districts — select “All upazilas” to see the district forecast.</>
+          : !showForecast
+            ? <>Actual data for <b>{year}</b>. Choose the latest year or “All loaded” to see the 18-month forecast.</>
+            : run
           ? <>Forecast for <b>{data?.selected?.area_name}</b> · {MODEL_LABEL[run.model] ?? run.model} · back-tested accuracy <b>{run.accuracy_pct ?? "—"}%</b> (1 month) / <b>{run.accuracy_3m_pct ?? "—"}%</b> (3 months)</>
           : result?.id === id
             ? <>No forecast for {area.label} (too few recent cases) — actual data only.</>
@@ -649,25 +669,31 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
     return { divisions: [...divisions.values()].sort(byLabel), districts: flatten(districts), upazilas: flatten(upazilas) };
   }, [records]);
 
+  // Every analysis follows the geography, the year and the selected metric.
   const trend = useMemo(
     () =>
-      [...groupTotals(geoScoped, (r) => r.year * 100 + r.month)]
+      [...groupTotals(scoped, (r) => r.year * 100 + r.month)]
         .sort((a, b) => a[0] - b[0])
         .map(([p, t]) => ({
           period: `${Math.floor(p / 100)}-${String(p % 100).padStart(2, "0")}`,
-          cases: t.cases,
+          value: round2(measureValue(t, metric)),
           tests: t.tests,
           tpr: round2(testPositivityRate(t.cases, t.tests)),
         })),
-    [geoScoped],
+    [scoped, metric],
   );
 
+  // All years → one bar per year; a single year → one bar per month of that year.
   const species = useMemo(
     () =>
-      [...groupTotals(geoScoped, (r) => r.year)]
-        .sort((a, b) => a[0] - b[0])
-        .map(([y, t]) => ({ year: String(y), pv: t.pv, pf: t.pf, mixed: t.mixed })),
-    [geoScoped],
+      year === "all"
+        ? [...groupTotals(geoScoped, (r) => r.year)]
+            .sort((a, b) => a[0] - b[0])
+            .map(([y, t]) => ({ label: String(y), pv: t.pv, pf: t.pf, mixed: t.mixed }))
+        : [...groupTotals(scoped, (r) => r.month)]
+            .sort((a, b) => a[0] - b[0])
+            .map(([m, t]) => ({ label: MONTHS[m - 1].slice(0, 3), pv: t.pv, pf: t.pf, mixed: t.mixed })),
+    [geoScoped, scoped, year],
   );
 
   // Highest to lowest (reliable rates first).
@@ -742,10 +768,16 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
           {KPI_METRICS.map(({ key, icon }) => {
             const death = key === "deaths";
             return (
-              <div
+              <button
+                type="button"
                 key={key}
-                title={isIndicator(key) ? INDICATORS[key].formula : undefined}
-                className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${death ? "border-red-200 bg-red-50" : isIndicator(key) ? "border-emerald-100 bg-emerald-50" : "border-slate-100 bg-slate-50"}`}
+                title={`${isIndicator(key) ? `${INDICATORS[key].formula}. ` : ""}Click to show ${measureLabel(key)} on the map, trend and ranking`}
+                aria-pressed={key === metric}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMetric(key);
+                }}
+                className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition hover:shadow ${death ? "border-red-200 bg-red-50" : isIndicator(key) ? "border-emerald-100 bg-emerald-50" : "border-slate-100 bg-slate-50"} ${key === metric ? "ring-2 ring-indigo-500" : ""}`}
               >
                 <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${death ? "bg-red-100 text-red-700" : "bg-white text-slate-600"}`}>
                   <Icon name={icon} className="h-5 w-5" />
@@ -754,14 +786,14 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
                   <div className={`truncate text-[11px] font-medium uppercase tracking-wide ${death ? "text-red-700" : "text-slate-500"}`}>{measureLabel(key)}</div>
                   <div className={`${big ? "text-3xl" : "text-xl"} font-bold ${death ? "text-red-700" : "text-slate-900"}`}>{formatMeasure(key, measureValue(totals, key))}</div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
       ),
     },
     trend: {
-      title: `Monthly confirmed cases and test positivity — ${scopeLabel}`,
+      title: `Monthly ${measureLabel(metric)} and ${metric === "tpr" ? "people tested" : "test positivity"} — ${scopeLabel}, ${yearLabel}`,
       clickToExpand: true,
       body: () => (
         // Two aligned panels instead of a dual-axis chart.
@@ -773,7 +805,7 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
                 <XAxis dataKey="period" tick={axisTick} minTickGap={24} hide />
                 <YAxis tick={axisTick} width={48} />
                 <Tooltip formatter={tooltipValue} />
-                <Bar dataKey="cases" name="Confirmed cases" fill={SERIES[0]} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="value" name={measureLabel(metric)} fill={metric === "deaths" ? DEATH_RED : SERIES[0]} radius={[2, 2, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -782,9 +814,16 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
               <LineChart data={trend} syncId="bi-trend" margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke={GRID} />
                 <XAxis dataKey="period" tick={axisTick} minTickGap={24} />
-                <YAxis tick={axisTick} width={48} unit="%" />
+                <YAxis tick={axisTick} width={48} unit={metric === "tpr" ? undefined : "%"} />
                 <Tooltip formatter={tooltipValue} />
-                <Line dataKey="tpr" name="Test positivity %" stroke={SERIES[1]} dot={false} strokeWidth={2} isAnimationActive={false} />
+                <Line
+                  dataKey={metric === "tpr" ? "tests" : "tpr"}
+                  name={metric === "tpr" ? "People tested" : "Test positivity %"}
+                  stroke={SERIES[1]}
+                  dot={false}
+                  strokeWidth={2}
+                  isAnimationActive={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -792,9 +831,11 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
       ),
     },
     forecast: {
-      title: `Cases, deaths & tests with 18-month forecast — ${geo.upazila ? `${geo.district?.label} (district of ${geo.upazila.label})` : scopeLabel}`,
+      title: `Cases, deaths & tests with 18-month forecast — ${scopeLabel}, ${yearLabel}`,
       clickToExpand: true,
-      body: (big) => <ForecastPanel area={forecastArea} records={areaRecords} expanded={big} />,
+      body: () => (
+        <ForecastPanel area={forecastArea} records={geoScoped} year={year} latestYear={years.at(-1) ?? null} upazila={geo.upazila?.label ?? null} />
+      ),
     },
     map: {
       title: `GIS — ${GEO_LEVELS[level].label} of ${geo.district?.label ?? geo.division?.label ?? "Bangladesh"}, ${yearLabel}`,
@@ -812,13 +853,13 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
       ),
     },
     species: {
-      title: `Species composition by year — ${scopeLabel}`,
+      title: `Species composition of cases by ${year === "all" ? "year" : "month"} — ${scopeLabel}, ${yearLabel}`,
       clickToExpand: true,
       body: () => (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={species} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             <CartesianGrid vertical={false} stroke={GRID} />
-            <XAxis dataKey="year" tick={axisTick} />
+            <XAxis dataKey="label" tick={axisTick} />
             <YAxis tick={axisTick} width={48} />
             <Tooltip formatter={tooltipValue} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
