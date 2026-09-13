@@ -79,7 +79,7 @@ export async function answerOffline(question: string): Promise<string> {
   if (!area && /(last|past) (12 months|year)|changed|how has malaria|situation/.test(q)) {
     const w = overview.last_12_months;
     const change = w.change_pct === null ? "—" : `${w.change_pct > 0 ? "+" : ""}${n(w.change_pct, 1)}%`;
-    const top = (overview.top_districts_last_12_months as { district_name: string; cases: number; deaths: number }[])
+    const top = (overview.top_districts_last_12_months as unknown as { district_name: string; cases: number; deaths: number }[])
       .slice(0, 5)
       .map((d) => `${d.district_name} ${n(Number(d.cases))}`)
       .join(", ");
