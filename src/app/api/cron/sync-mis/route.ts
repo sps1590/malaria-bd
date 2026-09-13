@@ -192,7 +192,7 @@ export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = process.env.DATABASE_URL || process.env.DATABASE_POSTGRES_URL || process.env.POSTGRES_URL;
   if (!databaseUrl) {
     return NextResponse.json({ ok: false, error: "DATABASE_URL is not configured" }, { status: 500 });
   }
