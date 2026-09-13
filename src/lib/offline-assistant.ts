@@ -91,6 +91,38 @@ function findMonths(question: string): number[] | undefined {
   return months.length ? months : undefined;
 }
 
+interface Period {
+  year: number;
+  month: number; // 1–12
+}
+const periodLabel = (p: Period) => `${MONTHS[p.month - 1]} ${p.year}`;
+const shiftMonth = (p: Period, delta: number): Period => {
+  const t = p.year * 12 + (p.month - 1) + delta;
+  return { year: Math.floor(t / 12), month: (t % 12) + 1 };
+};
+/** "August 2026" -> {year: 2026, month: 8}, from dataOverview()'s latest_data_month string. */
+function parseLatestPeriod(label: string): Period | null {
+  const m = /^([A-Za-z]+)\s+(\d{4})$/.exec(label.trim());
+  const month = m ? MONTHS.findIndex((mm) => mm === m[1]) + 1 : 0;
+  return m && month ? { year: Number(m[2]), month } : null;
+}
+
+/** "this/current/latest month" -> the latest reported period; "last/previous month" -> the one before it. */
+function findMonthPeriod(question: string, latest: Period | null): Period | null {
+  if (!latest) return null;
+  const q = question.toLowerCase();
+  if (/\b(this|current|latest)\s+month\b/.test(q)) return latest;
+  if (/\b(last|previous|prior)\s+month\b/.test(q)) return shiftMonth(latest, -1);
+  return null;
+}
+
+/** Explicit "compare to last year/month", "vs last", "year-on-year", "MoM" etc. — not just any "compare". */
+function wantsTimeComparison(question: string): boolean {
+  const q = question.toLowerCase();
+  if (/\byoy\b|\bmom\b|year[- ]on[- ]year|month[- ]on[- ]month/.test(q)) return true;
+  return /\b(compare|compared|comparison|vs\.?|versus|change)\b/.test(q) && /\b(last|previous|prior)\b/.test(q);
+}
+
 const FOOTER = "\n\nOffline assistant (rule-based). Add an `ANTHROPIC_API_KEY` to enable the full AI analyst for free-form questions.";
 
 export async function answerOffline(question: string): Promise<string> {
@@ -99,9 +131,19 @@ export async function answerOffline(question: string): Promise<string> {
   const lastYear = Number(overview.data_years.split("–")[1]);
   const index = await getAreaIndex();
   const area = findArea(index, question);
-  const { from, to } = findYears(question, lastYear);
-  const months = findMonths(question);
+  let { from, to } = findYears(question, lastYear);
+  let months = findMonths(question);
   const scopeName = area?.label ?? "Bangladesh";
+
+  // "this/current/last/previous month" resolves against the latest reported data month (surveillance
+  // data lags the calendar), and overrides the year/month scope for every branch below.
+  const latestPeriod = parseLatestPeriod(overview.latest_data_month);
+  const monthPeriod = findMonthPeriod(question, latestPeriod);
+  if (monthPeriod) {
+    from = monthPeriod.year;
+    to = monthPeriod.year;
+    months = [monthPeriod.month];
+  }
 
   if (/\bcompar(e|ing|ison)\b|\bversus\b|\bvs\.?\b/.test(q)) {
     const areas = findAreas(index, question);
@@ -126,6 +168,40 @@ export async function answerOffline(question: string): Promise<string> {
           : `- **${areas[i]!.label}**: no reports for ${r.period}`;
       });
       return `**Comparison — ${from && from !== period ? `${from}–${period}` : period}**\n${lines.join("\n")}${FOOTER}`;
+    }
+  }
+
+  // "cases in X compared to last year/month" — one area (or national), two time periods, real deltas.
+  // Uses an explicit "20XX" in the question if given, else the latest year — never the `to` from
+  // findYears, since its own "last year" phrase-handling would otherwise collide with this branch's.
+  if (wantsTimeComparison(q)) {
+    const monthly = /\bmonth\b/.test(q) && latestPeriod;
+    const explicitYears = [...q.matchAll(/\b(20\d{2})\b/g)].map((m) => Number(m[1]));
+    const curYear = explicitYears.length ? explicitYears[explicitYears.length - 1] : lastYear;
+    const curLabel = monthly ? periodLabel(latestPeriod!) : String(curYear);
+    const prevPeriod = monthly ? shiftMonth(latestPeriod!, -1) : null;
+    const prevLabel = monthly ? periodLabel(prevPeriod!) : String(curYear - 1);
+    const areaArg = area ? (area.district ?? area.division) : undefined;
+    const level = area?.level === "upazila" ? undefined : area?.level;
+    const [curStats, prevStats] = await Promise.all([
+      malariaStats({ area: areaArg, level, yearFrom: monthly ? latestPeriod!.year : curYear, yearTo: monthly ? latestPeriod!.year : curYear, months: monthly ? [latestPeriod!.month] : undefined }),
+      malariaStats({ area: areaArg, level, yearFrom: monthly ? prevPeriod!.year : curYear - 1, yearTo: monthly ? prevPeriod!.year : curYear - 1, months: monthly ? [prevPeriod!.month] : undefined }),
+    ]);
+    if (!("error" in curStats) && !("error" in prevStats)) {
+      const c = curStats.rows[0];
+      const p = prevStats.rows[0];
+      const line = (label: string, curV: number | null | undefined, prevV: number | null | undefined, digits = 0) => {
+        if (curV == null || prevV == null) return `- ${label}: **${n(curV, digits)}** vs **${n(prevV, digits)}** (no prior data to compare)`;
+        const d = prevV > 0 ? ((curV - prevV) / prevV) * 100 : null;
+        const dTxt = d === null ? "n/a (previous period was zero)" : `${d >= 0 ? "▲" : "▼"} ${n(Math.abs(d), 1)}%`;
+        return `- ${label}: **${n(curV, digits)}** vs **${n(prevV, digits)}** (${dTxt})`;
+      };
+      if (!c && !p) return `No malaria reports were found for ${scopeName} in ${curLabel} or ${prevLabel}.${FOOTER}`;
+      return `**${scopeName} — ${curLabel} vs ${prevLabel}**
+${line("Confirmed cases", c?.cases, p?.cases)}
+${line("Deaths", c?.deaths, p?.deaths)}
+${line("Tested", c?.tests, p?.tests)}
+${line("Test positivity", c?.tpr_pct, p?.tpr_pct, 2)}${FOOTER}`;
     }
   }
 

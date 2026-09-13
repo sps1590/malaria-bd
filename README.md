@@ -104,9 +104,13 @@ python pipeline/import_quantification.py "C:/path/NSP-BAN quantification_1904202
 
 ## Optional features
 
-- **AI analyst (Claude):** create a key at console.anthropic.com and set `ANTHROPIC_API_KEY`. Without a key,
-  the built-in offline assistant still answers common questions (cases/deaths by area and year, rankings,
-  monthly trends, forecasts, weather, alerts).
+- **AI analyst (Claude):** create a key at console.anthropic.com and set `ANTHROPIC_API_KEY` (this is paid,
+  pay-as-you-go API usage — separate from a claude.ai subscription; there's no free tier). Without a key, the
+  built-in offline assistant still answers questions from the real data (cases/deaths/tests by any area and
+  year/month, rankings, monthly trends, forecasts, weather, alerts, NSP/API/ABER), including "this/last month"
+  and "this/last year" and explicit current-vs-previous comparisons ("cases in X compared to last year",
+  "deaths this month vs last month", "year-on-year change in Y") with the exact figures and % change for both
+  periods — it just can't answer open-ended questions outside those patterns the way the full AI can.
 - **Email alerts:** follow the steps on the Alerts tab (Gmail App Password → `GMAIL_USER`,
   `GMAIL_APP_PASSWORD`, `ALERT_EMAIL_TO`).
 - **API and ABER:** come from the imported population workbook (see above).
