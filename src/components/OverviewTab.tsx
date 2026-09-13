@@ -67,7 +67,15 @@ export default function OverviewTab() {
       .catch(() => setError("Failed to load the overview."));
   }, []);
 
-  if (error) return <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>;
+  if (error) {
+    return /does not exist/.test(error) ? (
+      <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        The data warehouse is being set up — the first MIS data load has not finished yet. Please refresh in a few minutes.
+      </p>
+    ) : (
+      <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>
+    );
+  }
   if (!data) return <p className="text-sm text-slate-500">Loading command center…</p>;
 
   const o = data.overview;

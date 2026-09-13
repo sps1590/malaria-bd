@@ -119,6 +119,21 @@ function isAuthorized(request: NextRequest): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+/**
+ * A brand-new deployment may load the public MIS feed once without CRON_SECRET, so it can bootstrap itself.
+ * As soon as the warehouse holds data, every call needs the secret again.
+ */
+async function isEmptyWarehouse(databaseUrl: string): Promise<boolean> {
+  const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 15, onnotice: () => {} });
+  try {
+    const [{ exists }] = await sql<{ exists: boolean }[]>`SELECT to_regclass('mis_monthly') IS NOT NULL AS exists`;
+    if (!exists) return true;
+    return (await sql`SELECT 1 FROM mis_monthly LIMIT 1`).length === 0;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
 async function fetchPayload(): Promise<unknown[]> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
@@ -189,12 +204,12 @@ function validate(payload: unknown[]) {
 /* ------------------------------- Handler ------------------------------ */
 
 export async function GET(request: NextRequest) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
   const databaseUrl = process.env.DATABASE_URL || process.env.DATABASE_POSTGRES_URL || process.env.POSTGRES_URL;
   if (!databaseUrl) {
     return NextResponse.json({ ok: false, error: "DATABASE_URL is not configured" }, { status: 500 });
+  }
+  if (!isAuthorized(request) && !(await isEmptyWarehouse(databaseUrl))) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   const startedAt = Date.now();
