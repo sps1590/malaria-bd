@@ -236,7 +236,13 @@ ${line("Test positivity", c?.tpr_pct, p?.tpr_pct, 2)}${FOOTER}`;
     if (!nsp.available) return `${nsp.note}${FOOTER}`;
     const year = to ?? lastYear;
     const row = nsp.years.find((y) => y.year === year) ?? nsp.years[nsp.years.length - 1];
+    const prevRow = nsp.years.find((y) => y.year === row.year - 1);
     const pct = (v: number | null) => (v === null ? "—" : `${n(v, 1)}%`);
+    const chg = (curV: number | null, prevV: number | null) =>
+      curV === null || prevV === null ? "—" : prevV > 0 ? `${curV >= prevV ? "▲" : "▼"} ${n(Math.abs(((curV - prevV) / prevV) * 100), 1)}%` : curV > 0 ? "new (was 0)" : "no change";
+    const prevLine = prevRow
+      ? `\n\n**Vs ${prevRow.year}:** cases ${n(prevRow.actual_cases)} (${chg(row.actual_cases, prevRow.actual_cases)}) · API ${n(prevRow.api_actual, 2)} (${chg(row.api_actual, prevRow.api_actual)}) · ABER ${pct(prevRow.aber_actual_pct)} · deaths ${n(prevRow.actual_deaths)} (${chg(row.actual_deaths, prevRow.actual_deaths)})`
+      : `\n\n_No data for ${row.year - 1} to compare against._`;
     return `**Population, API/ABER and NSP targets — ${nsp.scope}, ${row.year}**
 - Population at risk: **${n(row.population)}**
 - Confirmed cases: **${n(row.actual_cases)}**${row.months_reported < 12 ? ` (${row.months_reported} months reported)` : ""} · NSP target **${n(row.nsp_cases)}** · expected (actual + forecast) **${n(row.expected_cases)}**
@@ -244,6 +250,7 @@ ${line("Test positivity", c?.tpr_pct, p?.tpr_pct, 2)}${FOOTER}`;
 - ABER: **${pct(row.aber_actual_pct)}** · NSP target ${pct(row.nsp_aber_pct)}
 - Tests: ${n(row.actual_tests)} · NSP target ${n(row.nsp_tests)}
 - Deaths: ${n(row.actual_deaths)} · NSP target ${n(row.nsp_deaths, 1)}
+${prevLine}
 
 Source file: \`${nsp.source}\` (BBS Census 2022 projected; NSP intensified scenario).${FOOTER}`;
   }
@@ -281,8 +288,9 @@ Source file: \`${nsp.source}\` (BBS Census 2022 projected; NSP intensified scena
   const trend = /trend|monthly|each month|by month|over time/.test(q);
   const total = /\btotal\b|\boverall\b|\baltogether\b|\bcombined\b|\bcumulative\b|\bin all\b|\ball[- ]?time\b/.test(q);
   const byYear = !total && /each year|by year|yearly|annual|per year|compare/.test(q);
+  const areaArg = area ? (area.level === "upazila" ? question.match(new RegExp(area.label.split(" ")[0], "i"))?.[0] ?? area.label : area.district ?? area.division) : undefined;
   const stats = await malariaStats({
-    area: area ? (area.level === "upazila" ? question.match(new RegExp(area.label.split(" ")[0], "i"))?.[0] ?? area.label : area.district ?? area.division) : undefined,
+    area: areaArg,
     level: area?.level,
     yearFrom: from ?? (ranking || trend ? lastYear : lastYear),
     yearTo: to ?? lastYear,
@@ -308,5 +316,25 @@ Source file: \`${nsp.source}\` (BBS Census 2022 projected; NSP intensified scena
   }
   const r = stats.rows[0];
   if (!r) return `No malaria reports were found for ${stats.scope} in ${stats.period}.${FOOTER}`;
-  return `**${stats.scope} — ${stats.period}** (data up to ${stats.latest_data_month})\n- Confirmed cases: **${n(r.cases)}** (P. falciparum ${n(r.pf)}, P. vivax ${n(r.pv)}, mixed ${n(r.mixed)}; Pf+mixed share ${n(r.pf_share_pct, 1)}%)\n- Deaths: **${n(r.deaths)}** (case fatality ${n(r.cfr_pct, 3)}%)\n- Tested: **${n(r.tests)}** — test positivity **${n(r.tpr_pct, 2)}%**\n- Severe: ${n(r.severe)} · Treated: ${n(r.treated_pct, 1)}% · Pregnant women: ${n(r.pregnant)}\n- Age: <1 ${n(r.age_under1)}, 1–4 ${n(r.age_1_4)}, 5–14 ${n(r.age_5_14)}, 15+ ${n(r.age_15_plus)} · Male ${n(r.male)}, female ${n(r.female)}${FOOTER}`;
+
+  // Every single-period answer — not just ones that ask for it explicitly — also states the
+  // previous equivalent period (same month a year earlier when one month is scoped, else the
+  // previous year) with the real percent change, so "current vs previous" never needs magic words.
+  let comparisonNote = "";
+  const effYear = to ?? lastYear;
+  const singlePeriod = from === undefined || from === effYear;
+  if (singlePeriod) {
+    const prevYear = effYear - 1;
+    const prevStats = await malariaStats({ area: areaArg, level: area?.level, yearFrom: prevYear, yearTo: prevYear, months });
+    if (!("error" in prevStats) && prevStats.rows[0]) {
+      const p = prevStats.rows[0];
+      const chg = (curV: number, prevV: number) => (prevV > 0 ? `${curV >= prevV ? "▲" : "▼"} ${n(Math.abs(((curV - prevV) / prevV) * 100), 1)}%` : curV > 0 ? "new (was 0)" : "no change");
+      const periodNote = months?.length === 1 ? `${MONTHS[months[0] - 1]} ${prevYear}` : String(prevYear);
+      comparisonNote = `\n\n**Vs ${periodNote}:** cases ${n(p.cases)} (${chg(r.cases, p.cases)}) · deaths ${n(p.deaths)} (${chg(r.deaths, p.deaths)}) · tested ${n(p.tests)} (${chg(r.tests, p.tests)}) · TPR ${n(p.tpr_pct, 2)}%`;
+    } else {
+      comparisonNote = `\n\n_No data for ${prevYear} to compare against._`;
+    }
+  }
+
+  return `**${stats.scope} — ${stats.period}** (data up to ${stats.latest_data_month})\n- Confirmed cases: **${n(r.cases)}** (P. falciparum ${n(r.pf)}, P. vivax ${n(r.pv)}, mixed ${n(r.mixed)}; Pf+mixed share ${n(r.pf_share_pct, 1)}%)\n- Deaths: **${n(r.deaths)}** (case fatality ${n(r.cfr_pct, 3)}%)\n- Tested: **${n(r.tests)}** — test positivity **${n(r.tpr_pct, 2)}%**\n- Severe: ${n(r.severe)} · Treated: ${n(r.treated_pct, 1)}% · Pregnant women: ${n(r.pregnant)}\n- Age: <1 ${n(r.age_under1)}, 1–4 ${n(r.age_1_4)}, 5–14 ${n(r.age_5_14)}, 15+ ${n(r.age_15_plus)} · Male ${n(r.male)}, female ${n(r.female)}${comparisonNote}${FOOTER}`;
 }
