@@ -463,6 +463,8 @@ function ChoroplethMap({
 
 interface ForecastPoint { year: number; month: number; yhat: number; lo80: number; hi80: number }
 interface ForecastApi {
+  available?: boolean;
+  areas?: unknown[];
   selected?: { area_name: string };
   cases?: { run: { model: string; accuracy_pct: number | null; accuracy_3m_pct: number | null } | null; forecast: ForecastPoint[] };
   deaths?: { forecast: ForecastPoint[] };
@@ -541,6 +543,8 @@ function ForecastPanel({
             ? <>Actual data for <b>{year}</b>. Choose the latest year or “All loaded” to see the 18-month forecast.</>
             : run
           ? <>Forecast for <b>{data?.selected?.area_name}</b> · {MODEL_LABEL[run.model] ?? run.model} · back-tested accuracy <b>{run.accuracy_pct ?? "—"}%</b> (1 month) / <b>{run.accuracy_3m_pct ?? "—"}%</b> (3 months)</>
+          : result?.id === id && result.data?.available === false && !result.data.areas?.length
+            ? <>Forecasts have not been generated for this deployment yet — actual data only.</>
           : result?.id === id
             ? <>No forecast for {area.label} (too few recent cases) — actual data only.</>
             : <>Loading forecast…</>}

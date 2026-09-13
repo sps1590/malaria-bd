@@ -10,7 +10,8 @@
     "db:local": "node scripts/local-db.mjs",
     "sync": "node --env-file-if-exists=.env.local scripts/sync.mjs",
     "geo:prepare": "node scripts/prepare-geo.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "seed:production": "node --env-file=.env.local scripts/seed-production.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

@@ -76,6 +76,21 @@ export async function answerOffline(question: string): Promise<string> {
     return `**${target === "deaths" ? "Death" : "Case"} forecast — ${scopeName}**\n${lines.join("\n")}\n\nModel: **${run?.model ?? "—"}** — ${run?.notes ?? ""}${FOOTER}`;
   }
 
+  if (!area && /(last|past) (12 months|year)|changed|how has malaria|situation/.test(q)) {
+    const w = overview.last_12_months;
+    const change = w.change_pct === null ? "—" : `${w.change_pct > 0 ? "+" : ""}${n(w.change_pct, 1)}%`;
+    const top = (overview.top_districts_last_12_months as { district_name: string; cases: number; deaths: number }[])
+      .slice(0, 5)
+      .map((d) => `${d.district_name} ${n(Number(d.cases))}`)
+      .join(", ");
+    return `**Bangladesh — last 12 months to ${overview.latest_data_month}**
+- Confirmed cases: **${n(w.confirmed_cases)}** (${change} vs the previous 12 months: ${n(w.previous_12_months_cases)})
+- Deaths: **${n(w.deaths)}**
+- Tested: **${n(w.tests)}** — test positivity **${n(w.tpr_pct, 2)}%**
+- Upazilas with cases: **${n(w.upazilas_with_cases)}**
+- Highest-burden districts: ${top}${FOOTER}`;
+  }
+
   if (/population|nsp|strategic plan|target|\bapi\b|annual parasite|aber|blood examination/.test(q)) {
     const district = area?.level === "district" ? area.district : undefined;
     const nsp = await nspComparison({ district });
