@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Malaria MIS Analytics",
-  description: "NMCP Bangladesh malaria MIS — pivot analysis, BI dashboard and GIS",
+  description: "NMEP Bangladesh malaria MIS — pivot analysis, BI dashboard and GIS",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

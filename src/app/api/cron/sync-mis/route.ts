@@ -6,6 +6,7 @@ import { ALERTS_SCHEMA, runAlerts } from "@/lib/alerts";
 import {
   MONTHS,
   NUMERIC_FIELDS,
+  canonicalGeoName,
   divisionOfDistrict,
   type NumericSource,
 } from "@/lib/malaria-metrics";
@@ -140,14 +141,17 @@ async function fetchPayload(): Promise<unknown[]> {
 }
 
 function toDbRow(r: MisApiRow): DbRow {
+  // "Central Reporting" is NMEP's central testing in Dhaka (Banani Thana); keep the reporting unit in the name.
+  const central = canonicalGeoName(r.DistrictName) === "centralreporting";
+  const district = central ? "Dhaka" : r.DistrictName;
   const row: DbRow = {
     upazila_id: r.UpazillaID,
     report_year: r.ReportYear,
     report_month: MONTHS.indexOf(r.ReportMonth) + 1,
     district_id: r.DistrictID,
-    division_name: divisionOfDistrict(r.DistrictName),
-    district_name: r.DistrictName,
-    upazila_name: r.UpazilaName,
+    division_name: divisionOfDistrict(district),
+    district_name: district,
+    upazila_name: central ? `Banani Thana (${r.UpazilaName}, tested by NMEP)` : r.UpazilaName,
   };
   for (const f of NUMERIC_FIELDS) row[f.column] = r[f.source];
   return row;

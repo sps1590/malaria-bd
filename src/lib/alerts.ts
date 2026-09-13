@@ -189,7 +189,7 @@ export function buildAlertEmail(alerts: AlertRecord[], appUrl?: string) {
 
   const deathSection = section(`Deaths (${deathTotal})`, deaths, deathLine);
   const surgeSection = section(`Sudden case increases (${surges.length})`, surges, surgeLine);
-  const footerText = `How this was detected: every death reported in the last ${ALERT_LOOKBACK_MONTHS} reporting months is alerted once; a surge is a district or upazila whose monthly confirmed cases exceed the median of the same month in the previous 3 years by more than ${SURGE_EXCESS_THRESHOLD}. Source: NMCP LMIS, checked automatically after the daily 09:00 BST sync.`;
+  const footerText = `How this was detected: every death reported in the last ${ALERT_LOOKBACK_MONTHS} reporting months is alerted once; a surge is a district or upazila whose monthly confirmed cases exceed the median of the same month in the previous 3 years by more than ${SURGE_EXCESS_THRESHOLD}. Source: NMEP MIS, checked automatically after the daily 09:00 BST sync.`;
 
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a;max-width:680px">
 <h2 style="margin:0 0 4px;color:#b91c1c">Malaria MIS automated alert</h2>

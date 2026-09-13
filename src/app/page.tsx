@@ -124,7 +124,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
             <div aria-hidden className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-indigo-500 text-lg font-black">M</div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Malaria MIS Analytics · Bangladesh</h1>
-              <p className="text-xs text-indigo-200">NMCP LMIS data warehouse · ERA5 climate · forecasting · GIS · alerts · AI analyst</p>
+              <p className="text-xs text-indigo-200">NMEP MIS data warehouse · ERA5 climate · forecasting · GIS · alerts · AI analyst</p>
             </div>
           </div>
 

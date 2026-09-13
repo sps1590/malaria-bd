@@ -301,7 +301,7 @@ const DISTRICT_TO_DIVISION = new Map<string, DivisionName>(
   ),
 );
 
-/** MIS has no division field; e.g. "Central Reporting" → "Unassigned". */
+/** MIS has no division field. ("Central Reporting" is re-filed as Dhaka / Banani Thana during the sync.) */
 export function divisionOfDistrict(districtName: string): string {
   return DISTRICT_TO_DIVISION.get(canonicalGeoName(districtName)) ?? UNASSIGNED_DIVISION;
 }
