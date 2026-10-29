@@ -305,3 +305,11 @@ const DISTRICT_TO_DIVISION = new Map<string, DivisionName>(
 export function divisionOfDistrict(districtName: string): string {
   return DISTRICT_TO_DIVISION.get(canonicalGeoName(districtName)) ?? UNASSIGNED_DIVISION;
 }
+
+/** The 13 endemic (at-risk) malaria districts, for the "Endemic Districts" selection. */
+export const ENDEMIC_DISTRICTS = [
+  "Bandarban", "Rangamati", "Khagrachhari", "Cox's Bazar", "Chattogram", "Sylhet", "Sunamganj",
+  "Habiganj", "Moulvibazar", "Mymensingh", "Sherpur", "Netrokona", "Kurigram",
+] as const;
+const ENDEMIC_KEYS = new Set(ENDEMIC_DISTRICTS.map((d) => canonicalGeoName(d)));
+export const isEndemicDistrictKey = (districtKey: string) => ENDEMIC_KEYS.has(districtKey);

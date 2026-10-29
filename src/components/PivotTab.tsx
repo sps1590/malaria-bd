@@ -7,8 +7,10 @@ import { CASE_BREAKS, ChoroplethMap, GEO_LEVELS, quantileBreaks, type AreaStat, 
 import { BUILT_BY, captureNodePng, downloadDataUrl } from "@/components/ChartTools";
 import { ADDITIVE_ONLY, PivotChart, type ChartKind, type ChartModel } from "@/components/PivotChart";
 import {
+  DIVISION_DISTRICTS,
   INDICATORS,
   canonicalGeoName,
+  isEndemicDistrictKey,
   upazilaMatchKey,
   MONTHS,
   NUMERIC_FIELDS,
@@ -507,6 +509,93 @@ function FilterTag({
   );
 }
 
+const ENDEMIC_TOKEN = "__endemic";
+
+/**
+ * Multi-select district dropdown for the toolbar: "All districts" (the default, nothing ticked),
+ * "Endemic Districts" (the 13 at-risk districts as one tick) and then each district by name.
+ * Picks combine — Endemic Districts plus a district outside that list shows both.
+ */
+function DistrictPicker({
+  options,
+  picked,
+  onChange,
+}: {
+  options: { key: string; label: string }[];
+  picked: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  const chosen = new Set(picked);
+  const names = new Map(options.map((o) => [o.key, o.label]));
+  const parts = picked.map((p) => (p === ENDEMIC_TOKEN ? "Endemic Districts" : (names.get(p) ?? p)));
+  const summary = parts.length === 0 ? "All districts" : parts.length <= 2 ? parts.join(" + ") : `${parts[0]} + ${parts.length - 1} more`;
+  const q = search.trim().toLowerCase();
+  const shown = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+  const toggle = (token: string) => onChange(chosen.has(token) ? picked.filter((p) => p !== token) : [...picked, token]);
+  const row = "flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-slate-50";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="District filter"
+        className={`flex max-w-56 items-center gap-1.5 rounded border px-2 py-1.5 ${picked.length ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-300 bg-white"}`}
+      >
+        <span className="truncate">{summary}</span>
+        <span className="text-[10px] opacity-60">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-64 max-w-[85vw] rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search districts…"
+            className="mb-1.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+            aria-label="Search districts"
+          />
+          <div className="max-h-64 overflow-y-auto">
+            <label className={`${row} font-medium text-slate-800`}>
+              <input type="checkbox" checked={picked.length === 0} onChange={() => onChange([])} />
+              All districts
+            </label>
+            <label className={`${row} font-medium text-amber-800`} title="Bandarban, Rangamati, Khagrachhari, Cox's Bazar, Chattogram, Sylhet, Sunamganj, Habiganj, Moulvibazar, Mymensingh, Sherpur, Netrokona, Kurigram">
+              <input type="checkbox" checked={chosen.has(ENDEMIC_TOKEN)} onChange={() => toggle(ENDEMIC_TOKEN)} />
+              Endemic Districts <span className="font-normal opacity-70">(13)</span>
+            </label>
+            <div className="my-1 border-t border-slate-100" />
+            {shown.length === 0 ? (
+              <p className="p-2 text-xs text-slate-400">No matching districts.</p>
+            ) : (
+              shown.map((o) => (
+                <label key={o.key} className={`${row} text-slate-700`}>
+                  <input type="checkbox" checked={chosen.has(o.key)} onChange={() => toggle(o.key)} />
+                  <span className="truncate">{o.label}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const fileStem = () => `malaria-pivot-${new Date().toISOString().slice(0, 10)}`;
 const periodString = (t: number) => `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
 const periodIndex = (s: string) => {
@@ -534,6 +623,9 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
 
   const [config, setConfig] = useState<PivotConfig>(DEFAULT_CONFIG);
   const [division, setDivision] = useState("");
+  // District picks: ENDEMIC_TOKEN and/or district keys; empty = every district (the default).
+  const [districtPick, setDistrictPick] = useState<string[]>([]);
+  const [casesOnly, setCasesOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortState>(null);
   const [exporting, setExporting] = useState<"xlsx" | "pdf" | "png" | null>(null);
@@ -558,6 +650,22 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     return out;
   }, [records, config.filters]);
 
+  // District choices (narrowed to the chosen division), keyed the same way the map/geo code keys them.
+  const districtKeyOf = useMemo(() => new Map([...new Set(records.map((r) => r.districtName))].map((n) => [n, canonicalGeoName(n)])), [records]);
+  const districtOptions = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const r of records) {
+      if (division && r.divisionName !== division) continue;
+      byKey.set(districtKeyOf.get(r.districtName) ?? r.districtName, r.districtName);
+    }
+    // All 64 districts are offered, including ones that have reported nothing in the data.
+    for (const [div, names] of Object.entries(DIVISION_DISTRICTS)) {
+      if (division && div !== division) continue;
+      for (const name of names) if (!byKey.has(canonicalGeoName(name))) byKey.set(canonicalGeoName(name), name);
+    }
+    return [...byKey].map(([key, label]) => ({ key, label })).sort((a, b) => naturalCompare(a.label, b.label));
+  }, [records, division, districtKeyOf]);
+
   const filtered = useMemo(() => {
     const a = periodIndex(monthFrom) ?? -Infinity;
     const b = periodIndex(monthTo) ?? Infinity;
@@ -566,12 +674,19 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       .map((f) => ({ f, allowed: filterSel[f] }))
       .filter((x): x is { f: FieldKey; allowed: string[] } => x.allowed !== undefined)
       .map((x) => ({ f: x.f, allowed: new Set(x.allowed) }));
+    const pickedKeys = new Set(districtPick.filter((p) => p !== ENDEMIC_TOKEN));
+    const withEndemic = districtPick.includes(ENDEMIC_TOKEN);
+    const districtOk = (name: string) => {
+      if (!districtPick.length) return true;
+      const key = districtKeyOf.get(name) ?? name;
+      return pickedKeys.has(key) || (withEndemic && isEndemicDistrictKey(key));
+    };
     return records.filter((r) => {
       const t = r.year * 12 + r.month - 1;
-      if (t < from || t > to || (division && r.divisionName !== division)) return false;
+      if (t < from || t > to || (division && r.divisionName !== division) || !districtOk(r.districtName)) return false;
       return active.every((x) => x.allowed.has(FIELDS[x.f].value(r)));
     });
-  }, [records, division, monthFrom, monthTo, config.filters, filterSel]);
+  }, [records, division, districtPick, districtKeyOf, monthFrom, monthTo, config.filters, filterSel]);
   // Dimension fields placed in Values are aggregated as a distinct count, so the pivot engine
   // needs to know which fields to track Sets for.
   const distinctValueFields = useMemo(() => config.values.filter((f) => FIELDS[f].kind === "dimension"), [config.values]);
@@ -585,8 +700,10 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   );
   const visibleRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? pivot.rows.filter((r) => r.labels.some((l) => l.toLowerCase().includes(q))) : pivot.rows;
-  }, [pivot.rows, query]);
+    // "Cases ≥ 1" hides result rows with no confirmed cases (e.g. districts/upazilas that reported none).
+    if (!q && !casesOnly) return pivot.rows;
+    return pivot.rows.filter((r) => (!casesOnly || r.total.totals.cases >= 1) && (!q || r.labels.some((l) => l.toLowerCase().includes(q))));
+  }, [pivot.rows, query, casesOnly]);
   // Grand total reflects the row filter, like an Excel pivot.
   const totalRow = useMemo<PivotRow>(() => {
     if (visibleRows === pivot.rows) {
@@ -684,9 +801,12 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       }
       addRecord(s.totals, r);
     }
-    for (const s of stats.values()) s.value = measureValue(s.totals, chartField as MeasureKey);
+    for (const [key, s] of stats) {
+      if (casesOnly && s.totals.cases < 1) stats.delete(key);
+      else s.value = measureValue(s.totals, chartField as MeasureKey);
+    }
     return stats;
-  }, [view, chartField, filtered, mapLevel]);
+  }, [view, chartField, filtered, mapLevel, casesOnly]);
   const mapBreaks = useMemo(
     () => (chartField === "cases" ? CASE_BREAKS[mapLevel] : quantileBreaks([...mapStats.values()].map((s) => s.value).filter((v): v is number => v !== null))),
     [chartField, mapLevel, mapStats],
@@ -750,7 +870,10 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       })
       .filter(Boolean)
       .join(", ");
-    return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Period: ${monthFrom} to ${monthTo}${f ? `  |  Filters: ${f}` : ""}`;
+    const districtSummary = districtPick.length
+      ? districtPick.map((p) => (p === ENDEMIC_TOKEN ? "Endemic Districts" : (districtOptions.find((o) => o.key === p)?.label ?? p))).join(", ")
+      : "All";
+    return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Districts: ${districtSummary}${casesOnly ? "  |  Cases >= 1 only" : ""}  |  Period: ${monthFrom} to ${monthTo}${f ? `  |  Filters: ${f}` : ""}`;
   }
 
   /** The data behind the current chart/map view as a sheet (row index 3 is always the header row). */
@@ -1090,6 +1213,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
+          <DistrictPicker options={districtOptions} picked={districtPick} onChange={setDistrictPick} />
           <label className="flex items-center gap-1 text-xs text-slate-600">
             From
             <input type="month" value={monthFrom} min={periodBounds.min} max={periodBounds.max}
@@ -1130,6 +1254,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
               setSort(null);
               setQuery("");
               setDivision("");
+              setDistrictPick([]);
+              setCasesOnly(false);
               setMonthFrom(periodBounds.min);
               setMonthTo(periodBounds.max);
             }}
@@ -1137,6 +1263,10 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           >
             Reset
           </button>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-700" title="Hide result rows that have no confirmed cases (totals then cover only the rows shown)">
+            <input type="checkbox" checked={casesOnly} onChange={(e) => setCasesOnly(e.target.checked)} />
+            Cases ≥ 1 only
+          </label>
           <label
             className={`flex items-center gap-1.5 text-xs ${config.columns.length ? "cursor-pointer text-slate-700" : "cursor-not-allowed text-slate-400"}`}
             title={config.columns.length ? "Hide the Grand total column(s) at the end of each row — the individual column data stays" : "Needs a field in Columns — without one, each value column is already the row total"}
