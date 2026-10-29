@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import SyncControl from "@/components/SyncControl";
 
 interface Weather {
   available: boolean;
@@ -96,6 +97,7 @@ export default function TopBar() {
       ) : (
         <span className="text-indigo-300/70">Loading weather…</span>
       )}
+      <SyncControl />
     </div>
   );
 }

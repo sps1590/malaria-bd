@@ -23,6 +23,17 @@ current temperature/rainfall/precipitation chance/humidity for Dhaka, and a "Dev
 Shahriar Parvez | MIS/IT Expert | NMEP" credit is shown in an amber badge top-right of the header and
 bottom-right of the page footer, and stamped into every exported PNG/`.xlsx`/`.pdf`.
 
+### Keeping data up to date
+
+- **Sync now** button (header strip on every tab) pulls the latest NMEP MIS feed on demand via `POST /api/sync`
+  and reloads the page when new records arrive. The strip also shows the newest data month and when it was last synced.
+- The page **syncs itself automatically** when the last successful sync is more than 6 hours old (checked on load and
+  every 30 minutes while a tab stays open).
+- `POST /api/sync` needs no secret but takes no input and is throttled (one sync per 2 minutes, never two at once), so
+  it can't be used to hammer the MIS server or the database. The daily cron (`/api/cron/sync-mis`) still requires
+  `CRON_SECRET`; both share the code in `src/lib/mis-sync.ts`.
+- ERA5 weather and forecasts are refreshed by the Python pipeline (see below), not by the button.
+
 ### Data flow (daily)
 
 1. **09:00 BST** — Vercel Cron calls `/api/cron/sync-mis`: fetch → Zod validation → idempotent upsert → alert detection → one email digest.
