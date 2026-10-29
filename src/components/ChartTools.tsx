@@ -88,6 +88,42 @@ export function IconButton({ icon, label, onClick }: { icon: IconName; label: st
 
 const TRANSPARENT_PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 
+/**
+ * Rasterizes a chart/map/table element to a PNG data URL. The credit line is stamped onto the node
+ * just for the capture, then removed — keeps every export attributed without cluttering the screen.
+ */
+export async function captureNodePng(node: HTMLElement): Promise<string> {
+  const stamp = document.createElement("div");
+  stamp.textContent = BUILT_BY;
+  Object.assign(stamp.style, {
+    position: "absolute", right: "6px", bottom: "4px", fontSize: "9px", lineHeight: "1.4",
+    color: "#94a3b8", background: "rgba(255,255,255,0.85)", padding: "1px 6px", borderRadius: "4px",
+    pointerEvents: "none", zIndex: "9999",
+  });
+  const needsRelative = getComputedStyle(node).position === "static";
+  if (needsRelative) node.style.setProperty("position", "relative");
+  node.appendChild(stamp);
+  try {
+    const { toPng } = await import("html-to-image");
+    return await toPng(node, {
+      backgroundColor: "#ffffff",
+      pixelRatio: 2,
+      imagePlaceholder: TRANSPARENT_PIXEL,
+      filter: (el) => !(el instanceof HTMLElement && el.dataset.noExport === "true"),
+    });
+  } finally {
+    stamp.remove();
+    if (needsRelative) node.style.removeProperty("position");
+  }
+}
+
+export function downloadDataUrl(url: string, filename: string) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${filename.replace(/[^\w.-]+/g, "-").toLowerCase()}.png`;
+  link.click();
+}
+
 /** Saves the referenced element (chart, map, table) as a PNG in the viewer's browser. */
 export function DownloadImageButton({ target, filename }: { target: RefObject<HTMLElement | null>; filename: string }) {
   const [busy, setBusy] = useState(false);
@@ -103,36 +139,12 @@ export function DownloadImageButton({ target, filename }: { target: RefObject<HT
         const node = target.current;
         if (!node) return;
         setBusy(true);
-        // Stamp the credit line onto the node just for the capture, then remove it — keeps every
-        // PNG export attributed without cluttering the on-screen widget.
-        const stamp = document.createElement("div");
-        stamp.textContent = BUILT_BY;
-        Object.assign(stamp.style, {
-          position: "absolute", right: "6px", bottom: "4px", fontSize: "9px", lineHeight: "1.4",
-          color: "#94a3b8", background: "rgba(255,255,255,0.85)", padding: "1px 6px", borderRadius: "4px",
-          pointerEvents: "none", zIndex: "9999",
-        });
-        const needsRelative = getComputedStyle(node).position === "static";
-        if (needsRelative) node.style.setProperty("position", "relative");
-        node.appendChild(stamp);
         try {
-          const { toPng } = await import("html-to-image");
-          const url = await toPng(node, {
-            backgroundColor: "#ffffff",
-            pixelRatio: 2,
-            imagePlaceholder: TRANSPARENT_PIXEL,
-            filter: (el) => !(el instanceof HTMLElement && el.dataset.noExport === "true"),
-          });
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = `${filename.replace(/[^\w.-]+/g, "-").toLowerCase()}.png`;
-          link.click();
+          downloadDataUrl(await captureNodePng(node), filename);
         } catch (err) {
           console.error("PNG export failed", err);
           window.alert("Could not create the image. Please try again.");
         } finally {
-          stamp.remove();
-          if (needsRelative) node.style.removeProperty("position");
           setBusy(false);
         }
       }}

@@ -3,9 +3,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Range } from "xlsx";
-import { BUILT_BY } from "@/components/ChartTools";
+import { CASE_BREAKS, ChoroplethMap, GEO_LEVELS, quantileBreaks, type AreaStat, type GeoLevel } from "@/components/BiTab";
+import { BUILT_BY, captureNodePng, downloadDataUrl } from "@/components/ChartTools";
+import { ADDITIVE_ONLY, PivotChart, type ChartKind, type ChartModel } from "@/components/PivotChart";
 import {
   INDICATORS,
+  canonicalGeoName,
+  upazilaMatchKey,
   MONTHS,
   NUMERIC_FIELDS,
   addRecord,
@@ -120,6 +124,28 @@ const DEFAULT_CONFIG: PivotConfig = {
 type FilterSelection = Partial<Record<FieldKey, string[]>>;
 
 type Zone = "rows" | "columns" | "values" | "filters";
+
+/** How the result is shown (and what the downloads contain): the grid, a chart, or a map. */
+type ViewKind = "table" | ChartKind | "map";
+const VIEWS: { key: ViewKind; label: string }[] = [
+  { key: "table", label: "Table" },
+  { key: "column", label: "Column" },
+  { key: "bar", label: "Bar" },
+  { key: "stacked", label: "Stacked" },
+  { key: "line", label: "Line" },
+  { key: "area", label: "Area" },
+  { key: "pie", label: "Pie" },
+  { key: "map", label: "Map" },
+];
+const TOP_N_CHOICES = [10, 20, 50, 100, 0]; // 0 = all
+const MAX_SERIES = 8; // the categorical palette has 8 hues — more series than that are cut, never recycled
+const noopSelect = () => {};
+const LEVEL_NAME: Record<GeoLevel, string> = { division: "Division", district: "District", upazila: "Upazila" };
+const GEO_ROW_LEVELS: { field: FieldKey; level: GeoLevel }[] = [
+  { field: "upazilaName", level: "upazila" },
+  { field: "districtName", level: "district" },
+  { field: "divisionName", level: "division" },
+];
 type SortState = { id: string; dir: 1 | -1 } | null;
 
 /** Per-cell accumulator: summed Totals for measure values, plus a distinct-value Set per dimension field placed in Values. */
@@ -510,9 +536,15 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   const [division, setDivision] = useState("");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortState>(null);
-  const [exporting, setExporting] = useState<"xlsx" | "pdf" | null>(null);
+  const [exporting, setExporting] = useState<"xlsx" | "pdf" | "png" | null>(null);
   const [filterSel, setFilterSel] = useState<FilterSelection>({});
   const [hideTotals, setHideTotals] = useState(false);
+  const [view, setView] = useState<ViewKind>("table");
+  const [plotField, setPlotField] = useState<FieldKey | null>(null);
+  const [topN, setTopN] = useState(20);
+  const [mapLevelSel, setMapLevelSel] = useState<GeoLevel | null>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
 
   // Every distinct value of each field placed in Filters (from all loaded records, so the checklist
   // doesn't shrink as other filters narrow the data), in the field's natural order.
@@ -573,6 +605,96 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     [visibleRows, sort, config.rows, valueColumns, config.values],
   );
 
+  /* ----------------------- Chart / map view of the same result ----------------------- */
+
+  // A chart has one value axis, so one measure is plotted at a time (mixing counts with rates on one
+  // axis would mislead); the picker chooses among the measures placed in Values.
+  const measureFields = useMemo(() => config.values.filter((f) => FIELDS[f].kind === "measure"), [config.values]);
+  const chartField = plotField && measureFields.includes(plotField) ? plotField : (measureFields[0] ?? null);
+  const additive = chartField !== null && !isIndicator(chartField);
+  const isChartView = view !== "table" && view !== "map";
+  const chartUnsuitable = isChartView && ADDITIVE_ONLY.includes(view) && !additive;
+
+  const chart = useMemo<{ model: ChartModel; note: string; title: string } | null>(() => {
+    if (!isChartView || !chartField || chartUnsuitable) return null;
+    const timeOnly = (fs: FieldKey[]) => fs.length > 0 && fs.every((f) => TIME_DIMS.has(f));
+    const labelOf = (r: PivotRow) => (config.rows.length ? r.labels.join(" · ") : "All records");
+    const crossTab = config.columns.length > 0;
+    const notes: string[] = [];
+    const round = (v: number | null) => (v === null ? null : isIndicator(chartField) ? Math.round(v * 100) / 100 : v);
+    const cell = (row: PivotRow, colKey: string | null) => round(valueOf(row, { id: "", colKey, group: "", field: chartField }));
+
+    let cats = rows;
+    if (topN > 0 && cats.length > topN) {
+      cats = timeOnly(config.rows) ? cats.slice(-topN) : cats.slice(0, topN);
+      notes.push(`Showing ${timeOnly(config.rows) ? "the latest" : "the first"} ${topN} of ${rows.length.toLocaleString("en-US")} rows`);
+    }
+
+    let cols = pivot.columns;
+    if (crossTab && cols.length > MAX_SERIES) {
+      const keep = timeOnly(config.columns)
+        ? cols.slice(-MAX_SERIES)
+        : [...cols]
+            .sort((a, b) => (measureValue(pivot.columnTotals.get(b.key)?.totals ?? emptyTotals(), chartField as MeasureKey) ?? -Infinity) - (measureValue(pivot.columnTotals.get(a.key)?.totals ?? emptyTotals(), chartField as MeasureKey) ?? -Infinity))
+            .slice(0, MAX_SERIES);
+      cols = cols.filter((c) => keep.includes(c));
+      notes.push(`Showing ${MAX_SERIES} of ${pivot.columns.length} ${config.columns.map((f) => FIELDS[f].label).join(" › ")} series`);
+    }
+
+    const series = crossTab ? cols.map((c, i) => ({ key: `s${i}`, label: c.label })) : [{ key: "s0", label: fieldValueLabel(chartField) }];
+    const data = cats.map((row) => {
+      const o: Record<string, string | number | null> = { name: labelOf(row) };
+      series.forEach((s, i) => {
+        o[s.key] = cell(row, crossTab ? cols[i].key : null);
+      });
+      return o;
+    });
+
+    // Pie: one slice per row from the row total, biggest first; everything past the palette folds into "Other".
+    const slices = rows
+      .map((row) => ({ name: labelOf(row), value: valueOf(row, { id: "", colKey: null, group: "", field: chartField }) ?? 0 }))
+      .filter((s) => s.value > 0)
+      .sort((a, b) => b.value - a.value);
+    const pie = slices.slice(0, MAX_SERIES);
+    const rest = slices.slice(MAX_SERIES).reduce((sum, s) => sum + s.value, 0);
+    if (rest > 0) pie.push({ name: "Other", value: rest });
+
+    const rowText = config.rows.map((f) => FIELDS[f].label).join(" › ") || "all records";
+    const colText = crossTab ? `, by ${config.columns.map((f) => FIELDS[f].label).join(" › ")}` : "";
+    return {
+      model: { series, rows: data, pie },
+      note: notes.join(" · "),
+      title: `${fieldValueLabel(chartField)} by ${rowText}${colText} · ${monthFrom} to ${monthTo}`,
+    };
+  }, [isChartView, chartField, chartUnsuitable, rows, pivot, config.rows, config.columns, topN, monthFrom, monthTo]);
+
+  // Map: geography is taken from the deepest place field in Rows (or chosen here); the other
+  // fields/filters still narrow the records that are summed into each area.
+  const rowGeoLevel = GEO_ROW_LEVELS.find((g) => config.rows.includes(g.field))?.level ?? null;
+  const mapLevel: GeoLevel = mapLevelSel ?? rowGeoLevel ?? "district";
+  const mapStats = useMemo(() => {
+    const stats = new Map<string, AreaStat>();
+    if (view !== "map" || !chartField) return stats;
+    for (const r of filtered) {
+      const key = mapLevel === "division" ? canonicalGeoName(r.divisionName) : mapLevel === "district" ? canonicalGeoName(r.districtName) : upazilaMatchKey(r.upazilaName);
+      let s = stats.get(key);
+      if (!s) {
+        s = { key, label: mapLevel === "division" ? r.divisionName : mapLevel === "district" ? r.districtName : r.upazilaName, totals: emptyTotals(), value: null };
+        stats.set(key, s);
+      }
+      addRecord(s.totals, r);
+    }
+    for (const s of stats.values()) s.value = measureValue(s.totals, chartField as MeasureKey);
+    return stats;
+  }, [view, chartField, filtered, mapLevel]);
+  const mapBreaks = useMemo(
+    () => (chartField === "cases" ? CASE_BREAKS[mapLevel] : quantileBreaks([...mapStats.values()].map((s) => s.value).filter((v): v is number => v !== null))),
+    [chartField, mapLevel, mapStats],
+  );
+  const mapTitle = chartField ? `${fieldValueLabel(chartField)} by ${GEO_LEVELS[mapLevel].label.toLowerCase().replace(/s$/, "")} · ${monthFrom} to ${monthTo}` : "";
+
+  const viewReady = view === "map" ? chartField !== null : isChartView && chart !== null && chart.model.rows.length > 0;
+
   const dimCount = Math.max(config.rows.length, 1);
   const dimsWidth = dimCount * DIM_WIDTH;
 
@@ -631,6 +753,49 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Period: ${monthFrom} to ${monthTo}${f ? `  |  Filters: ${f}` : ""}`;
   }
 
+  /** The data behind the current chart/map view as a sheet (row index 3 is always the header row). */
+  function viewSheet(): { name: string; aoa: (string | number | null)[][] } | null {
+    if (view === "map" && chartField) {
+      const list = [...mapStats.values()].sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
+      return {
+        name: "Map data",
+        aoa: [
+          [BUILT_BY], [mapTitle], [],
+          [LEVEL_NAME[mapLevel], fieldValueLabel(chartField), "Confirmed cases", "Deaths", "Tested"],
+          ...list.map((s) => [s.label, s.value === null ? null : Math.round(s.value * 100) / 100, s.totals.cases, s.totals.deaths, s.totals.tests]),
+        ],
+      };
+    }
+    if (isChartView && chart && chartField) {
+      if (view === "pie") {
+        return { name: "Chart data", aoa: [[BUILT_BY], [chart.title], [], ["Slice", fieldValueLabel(chartField)], ...chart.model.pie.map((s) => [s.name, s.value])] };
+      }
+      const { series, rows: data } = chart.model;
+      return {
+        name: "Chart data",
+        aoa: [[BUILT_BY], [chart.title], [], [config.rows.map((f) => FIELDS[f].label).join(" › ") || "Scope", ...series.map((s) => s.label)], ...data.map((r) => [String(r.name), ...series.map((s) => r[s.key] ?? null)])],
+      };
+    }
+    return null;
+  }
+
+  /** The element holding the chart or map currently on screen, for PNG capture. */
+  const viewNode = () => (view === "map" ? mapRef.current : isChartView ? chartRef.current : null);
+
+  async function exportPng() {
+    const node = viewNode();
+    if (!node) return;
+    setExporting("png");
+    try {
+      downloadDataUrl(await captureNodePng(node), `${fileStem()}-${view}`);
+    } catch (err) {
+      console.error("PNG export failed", err);
+      window.alert("Could not create the image. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  }
+
   async function exportXlsx() {
     setExporting("xlsx");
     try {
@@ -672,6 +837,14 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Pivot");
+      // The chosen chart/map view travels with the workbook as its own sheet of exactly what is plotted,
+      // ready for Excel's Insert → Chart (the file format used here can't embed a picture — PNG/PDF do).
+      const extra = viewSheet();
+      if (extra) {
+        const sheet = XLSX.utils.aoa_to_sheet(extra.aoa);
+        sheet["!cols"] = [{ wch: 32 }, ...extra.aoa[3].slice(1).map(() => ({ wch: 16 }))];
+        XLSX.utils.book_append_sheet(wb, sheet, extra.name);
+      }
       XLSX.writeFile(wb, `${fileStem()}.xlsx`);
     } finally {
       setExporting(null);
@@ -688,11 +861,36 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
       const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: valueColumns.length > 12 ? "a3" : "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      doc.setFontSize(13);
-      doc.text("Malaria MIS - Pivot report", 28, 30);
-      doc.setFontSize(8);
-      doc.text(describeConfig(), 28, 44);
-      doc.text(BUILT_BY, pageWidth - 28, 20, { align: "right" });
+      const drawHeader = () => {
+        doc.setFontSize(13);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Malaria MIS - Pivot report", 28, 30);
+        doc.setFontSize(8);
+        doc.text(describeConfig(), 28, 44);
+        doc.text(BUILT_BY, pageWidth - 28, 20, { align: "right" });
+      };
+      const drawFooter = () => {
+        doc.setFontSize(7);
+        doc.setTextColor(148, 163, 184);
+        doc.text(BUILT_BY, pageWidth - 28, pageHeight - 10, { align: "right" });
+      };
+      drawHeader();
+
+      // Chart/map views: the picture gets the first page, the table that backs it follows.
+      const node = viewNode();
+      if (node) {
+        const image = await captureNodePng(node);
+        const props = doc.getImageProperties(image);
+        const maxW = pageWidth - 56;
+        const maxH = pageHeight - 54 - 30;
+        const scale = Math.min(maxW / props.width, maxH / props.height);
+        const w = props.width * scale;
+        const h = props.height * scale;
+        doc.addImage(image, "PNG", 28 + (maxW - w) / 2, 54, w, h);
+        drawFooter();
+        doc.addPage();
+        drawHeader();
+      }
 
       autoTable(doc, {
         startY: 54,
@@ -707,11 +905,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
         columnStyles: Object.fromEntries(valueColumns.map((_, i) => [dimLabels.length + i, { halign: "right" as const }])),
         horizontalPageBreak: true,
         horizontalPageBreakRepeat: dimLabels.map((_, i) => i),
-        didDrawPage: () => {
-          doc.setFontSize(7);
-          doc.setTextColor(148, 163, 184);
-          doc.text(BUILT_BY, pageWidth - 28, pageHeight - 10, { align: "right" });
-        },
+        didDrawPage: drawFooter,
       });
       doc.save(`${fileStem()}.pdf`);
     } finally {
@@ -823,6 +1017,66 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
         </span>
       </div>
 
+      {/* Output — how the result is shown, and what the downloads contain. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-slate-200 bg-white p-2.5 text-xs">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">View as</span>
+        <div role="tablist" aria-label="Output view" className="flex flex-wrap gap-1">
+          {VIEWS.map((v) => (
+            <button
+              key={v.key}
+              type="button"
+              role="tab"
+              aria-selected={view === v.key}
+              onClick={() => setView(v.key)}
+              className={`rounded-md border px-2.5 py-1 font-medium ${view === v.key ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-indigo-300 hover:text-indigo-700"}`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        {view !== "table" && measureFields.length > 0 && (
+          <label className="flex items-center gap-1 text-slate-600" title="A chart has one value axis, so one measure is plotted at a time">
+            Plot
+            <select value={chartField ?? ""} onChange={(e) => setPlotField(e.target.value as FieldKey)} className="max-w-44 rounded border border-slate-300 px-1.5 py-1">
+              {measureFields.map((f) => (
+                <option key={f} value={f}>{fieldValueLabel(f)}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {isChartView && view !== "pie" && (
+          <label className="flex items-center gap-1 text-slate-600">
+            Show
+            <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className="rounded border border-slate-300 px-1.5 py-1">
+              {TOP_N_CHOICES.map((n) => (
+                <option key={n} value={n}>{n === 0 ? "All rows" : `${n} rows`}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {view === "map" && (
+          <label className="flex items-center gap-1 text-slate-600">
+            Map by
+            <select value={mapLevel} onChange={(e) => setMapLevelSel(e.target.value as GeoLevel)} className="rounded border border-slate-300 px-1.5 py-1">
+              {(Object.keys(LEVEL_NAME) as GeoLevel[]).map((l) => (
+                <option key={l} value={l}>{LEVEL_NAME[l]}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setConfig((c) => ({ ...c, rows: c.columns, columns: c.rows }));
+            setSort(null);
+          }}
+          title="Swap the Rows and Columns fields"
+          className="ml-auto rounded border border-slate-300 px-2 py-1 text-slate-700 hover:bg-slate-50"
+        >
+          ⇄ Swap rows &amp; columns
+        </button>
+      </div>
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm">
           <select
@@ -870,6 +1124,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
             onClick={() => {
               setConfig(DEFAULT_CONFIG);
               setFilterSel({});
+              setPlotField(null);
+              setMapLevelSel(null);
               setHideTotals(false);
               setSort(null);
               setQuery("");
@@ -899,6 +1155,17 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           <span className="ml-auto text-xs text-slate-500">
             {rows.length.toLocaleString("en-US")} rows × {valueColumns.length.toLocaleString("en-US")} value columns
           </span>
+          {view !== "table" && (
+            <button
+              type="button"
+              disabled={exporting !== null || !viewReady}
+              onClick={exportPng}
+              title={`Download the ${view === "map" ? "map" : "chart"} as a PNG picture`}
+              className="rounded bg-indigo-700 px-3 py-1.5 font-medium text-white hover:bg-indigo-600 disabled:opacity-50"
+            >
+              {exporting === "png" ? "Exporting…" : "Export .png"}
+            </button>
+          )}
           <button
             type="button"
             disabled={exporting !== null || config.values.length === 0}
@@ -917,8 +1184,37 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           </button>
         </div>
 
-        {/* Virtualized grid */}
-        {config.values.length === 0 ? (
+        {/* Chart / map output */}
+        {config.values.length > 0 && view !== "table" ? (
+          <div className="rounded-lg border border-slate-200 bg-white p-2">
+            {!chartField ? (
+              <p className="p-8 text-center text-sm text-slate-500">
+                Charts and maps plot a count or an indicator — add one (for example Confirmed cases) to Values.
+              </p>
+            ) : chartUnsuitable ? (
+              <p className="p-8 text-center text-sm text-slate-500">
+                The {view} view adds values together, which doesn&apos;t work for a rate such as {fieldValueLabel(chartField)}. Plot a count (cases, deaths, tests …) here, or choose Column, Bar, Line or Area.
+              </p>
+            ) : view === "map" ? (
+              <div ref={mapRef} className="bg-white p-3">
+                <h4 className="mb-2 text-sm font-semibold text-slate-800">{mapTitle}</h4>
+                <div className="h-[60vh] min-h-72">
+                  <ChoroplethMap level={mapLevel} parentKey={null} selectedKey={null} stats={mapStats} breaks={mapBreaks} metric={chartField as MeasureKey} onSelect={noopSelect} />
+                </div>
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  Each area sums every record that passes the filters and period; Rows and Columns don&apos;t split the map.
+                </p>
+              </div>
+            ) : chart && chart.model.rows.length > 0 ? (
+              <>
+                {chart.note && view !== "pie" && <p className="px-3 pt-1 text-[11px] text-amber-700">{chart.note} — narrow with Filters or raise “Show”.</p>}
+                <PivotChart kind={view as ChartKind} model={chart.model} title={chart.title} format={(v) => formatFieldValue(chartField, v)} captureRef={chartRef} />
+              </>
+            ) : (
+              <p className="p-8 text-center text-sm text-slate-500">No data for this selection.</p>
+            )}
+          </div>
+        ) : config.values.length === 0 ? (
           <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
             Add at least one field to Values.
           </div>
