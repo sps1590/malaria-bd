@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Range } from "xlsx";
 import { BUILT_BY } from "@/components/ChartTools";
@@ -105,15 +105,21 @@ interface PivotConfig {
   rows: FieldKey[];
   columns: FieldKey[];
   values: FieldKey[];
+  /** Optional report filters (like Excel's Filters area) — empty by default. */
+  filters: FieldKey[];
 }
 
 const DEFAULT_CONFIG: PivotConfig = {
   rows: ["divisionName", "districtName"],
   columns: ["year"],
   values: ["cases", "tests", "tpr", "api"],
+  filters: [],
 };
 
-type Zone = "rows" | "columns" | "values";
+/** Values each filter field is restricted to; a field with no entry (or not in config.filters) is unrestricted. */
+type FilterSelection = Partial<Record<FieldKey, string[]>>;
+
+type Zone = "rows" | "columns" | "values" | "filters";
 type SortState = { id: string; dir: 1 | -1 } | null;
 
 /** Per-cell accumulator: summed Totals for measure values, plus a distinct-value Set per dimension field placed in Values. */
@@ -216,12 +222,12 @@ function buildPivot(records: readonly MisRecord[], rowFields: FieldKey[], column
   return { rows, columns, columnTotals, grandTotal };
 }
 
-function buildValueColumns(columns: PivotColumn[], fields: FieldKey[], crossTab: boolean): ValueColumn[] {
+function buildValueColumns(columns: PivotColumn[], fields: FieldKey[], crossTab: boolean, showTotals: boolean): ValueColumn[] {
+  // Without Columns every value column already is the row total, so there is no separate total to hide.
   if (!crossTab) return fields.map((f) => ({ id: f, colKey: null, group: "", field: f }));
-  return [
-    ...columns.flatMap((c) => fields.map((f) => ({ id: `${c.key}${KEY_SEP}${f}`, colKey: c.key, group: c.label, field: f }))),
-    ...fields.map((f) => ({ id: `__total${KEY_SEP}${f}`, colKey: null, group: "Grand total", field: f })),
-  ];
+  const body = columns.flatMap((c) => fields.map((f) => ({ id: `${c.key}${KEY_SEP}${f}`, colKey: c.key, group: c.label, field: f })));
+  if (!showTotals) return body;
+  return [...body, ...fields.map((f) => ({ id: `__total${KEY_SEP}${f}`, colKey: null, group: "Grand total", field: f }))];
 }
 
 function valueOf(row: PivotRow, vc: ValueColumn): number | null {
@@ -285,9 +291,11 @@ function addField(cfg: PivotConfig, zone: Zone, key: FieldKey): PivotConfig {
   const rows = cfg.rows.filter((k) => k !== key);
   const columns = cfg.columns.filter((k) => k !== key);
   const values = cfg.values.filter((k) => k !== key);
-  if (zone === "rows") return rows.length >= MAX_FIELDS ? cfg : { rows: [...rows, key], columns, values };
-  if (zone === "columns") return columns.length >= MAX_FIELDS ? cfg : { rows, columns: [...columns, key], values };
-  return { rows, columns, values: [...values, key] };
+  const filters = cfg.filters.filter((k) => k !== key);
+  if (zone === "rows") return rows.length >= MAX_FIELDS ? cfg : { rows: [...rows, key], columns, values, filters };
+  if (zone === "columns") return columns.length >= MAX_FIELDS ? cfg : { rows, columns: [...columns, key], values, filters };
+  if (zone === "filters") return { rows, columns, values, filters: [...filters, key] };
+  return { rows, columns, values: [...values, key], filters };
 }
 
 /* ------------------------------ UI pieces -------------------------------- */
@@ -318,13 +326,16 @@ function FieldPickerGroup({
   label,
   hint,
   tags,
+  customTags,
   options,
   onAdd,
   disabled,
 }: {
   label: string;
   hint: string;
-  tags: { key: string; label: string; tone: "dimension" | "count" | "indicator"; onRemove: () => void }[];
+  tags?: { key: string; label: string; tone: "dimension" | "count" | "indicator"; onRemove: () => void }[];
+  /** Replaces the plain tags (the Filters zone renders tags that open a value checklist). */
+  customTags?: ReactNode;
   options: { key: string; label: string; title?: string; tone: "dimension" | "count" | "indicator" }[];
   onAdd: (key: string) => void;
   disabled?: boolean;
@@ -344,9 +355,7 @@ function FieldPickerGroup({
   return (
     <div ref={ref} className="relative flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      {tags.map((t) => (
-        <FieldTag key={t.key} label={t.label} tone={t.tone} onRemove={t.onRemove} />
-      ))}
+      {customTags ?? tags?.map((t) => <FieldTag key={t.key} label={t.label} tone={t.tone} onRemove={t.onRemove} />)}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -383,6 +392,95 @@ function FieldPickerGroup({
   );
 }
 
+/**
+ * A field placed in Filters: click its name to pop a checklist of that field's values (like Excel's
+ * report filter). No checks changed = all values pass; the badge shows "n of m" once restricted.
+ */
+function FilterTag({
+  label,
+  tone,
+  allValues,
+  selected,
+  onChange,
+  onRemove,
+}: {
+  label: string;
+  tone: "dimension" | "count" | "indicator";
+  allValues: string[];
+  selected: string[] | undefined;
+  onChange: (next: string[] | undefined) => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  const chosen = useMemo(() => new Set(selected ?? allValues), [selected, allValues]);
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q ? allValues.filter((v) => v.toLowerCase().includes(q)) : allValues;
+  }, [allValues, search]);
+  const restricted = selected !== undefined && selected.length !== allValues.length;
+  const commit = (next: Set<string>) => onChange(next.size === allValues.length ? undefined : allValues.filter((v) => next.has(v)));
+  const toggle = (v: string) => {
+    const next = new Set(chosen);
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
+    commit(next);
+  };
+
+  return (
+    <span ref={ref} className="relative inline-flex">
+      <span className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium ${restricted ? "border-amber-300 bg-amber-50 text-amber-900" : tone === "dimension" ? "border-sky-200 bg-sky-50 text-sky-800" : "border-slate-200 bg-white text-slate-700"}`}>
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} title="Choose which values to include" className="inline-flex items-center gap-1">
+          {label}
+          <span className="text-[10px] font-normal opacity-70">{restricted ? `${chosen.size} of ${allValues.length}` : "All"} ▾</span>
+        </button>
+        <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="ml-0.5 text-slate-400 hover:text-red-600">
+          ×
+        </button>
+      </span>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-60 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={`Search ${label.toLowerCase()}…`}
+            className="mb-1.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+            aria-label={`Search ${label} values`}
+          />
+          <div className="mb-1 flex gap-3 text-[11px] text-indigo-700">
+            <button type="button" onClick={() => onChange(undefined)} className="hover:underline">Select all</button>
+            <button type="button" onClick={() => onChange([])} className="hover:underline">Clear</button>
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            {shown.length === 0 ? (
+              <p className="p-2 text-xs text-slate-400">No matching values.</p>
+            ) : (
+              shown.map((v) => (
+                <label key={v} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs text-slate-700 hover:bg-slate-50">
+                  <input type="checkbox" checked={chosen.has(v)} onChange={() => toggle(v)} />
+                  <span className="truncate" title={v}>{v}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 const fileStem = () => `malaria-pivot-${new Date().toISOString().slice(0, 10)}`;
 const periodString = (t: number) => `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
 const periodIndex = (s: string) => {
@@ -413,16 +511,35 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortState>(null);
   const [exporting, setExporting] = useState<"xlsx" | "pdf" | null>(null);
+  const [filterSel, setFilterSel] = useState<FilterSelection>({});
+  const [hideTotals, setHideTotals] = useState(false);
+
+  // Every distinct value of each field placed in Filters (from all loaded records, so the checklist
+  // doesn't shrink as other filters narrow the data), in the field's natural order.
+  const filterValues = useMemo(() => {
+    const out = new Map<FieldKey, string[]>();
+    for (const f of config.filters) {
+      const set = new Set<string>();
+      for (const r of records) set.add(FIELDS[f].value(r));
+      out.set(f, [...set].sort(FIELDS[f].compare ?? naturalCompare));
+    }
+    return out;
+  }, [records, config.filters]);
 
   const filtered = useMemo(() => {
     const a = periodIndex(monthFrom) ?? -Infinity;
     const b = periodIndex(monthTo) ?? Infinity;
     const [from, to] = a <= b ? [a, b] : [b, a];
+    const active = config.filters
+      .map((f) => ({ f, allowed: filterSel[f] }))
+      .filter((x): x is { f: FieldKey; allowed: string[] } => x.allowed !== undefined)
+      .map((x) => ({ f: x.f, allowed: new Set(x.allowed) }));
     return records.filter((r) => {
       const t = r.year * 12 + r.month - 1;
-      return t >= from && t <= to && (!division || r.divisionName === division);
+      if (t < from || t > to || (division && r.divisionName !== division)) return false;
+      return active.every((x) => x.allowed.has(FIELDS[x.f].value(r)));
     });
-  }, [records, division, monthFrom, monthTo]);
+  }, [records, division, monthFrom, monthTo, config.filters, filterSel]);
   // Dimension fields placed in Values are aggregated as a distinct count, so the pivot engine
   // needs to know which fields to track Sets for.
   const distinctValueFields = useMemo(() => config.values.filter((f) => FIELDS[f].kind === "dimension"), [config.values]);
@@ -431,8 +548,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
     [filtered, config.rows, config.columns, distinctValueFields],
   );
   const valueColumns = useMemo(
-    () => buildValueColumns(pivot.columns, config.values, config.columns.length > 0),
-    [pivot.columns, config.values, config.columns],
+    () => buildValueColumns(pivot.columns, config.values, config.columns.length > 0, !hideTotals),
+    [pivot.columns, config.values, config.columns, hideTotals],
   );
   const visibleRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -482,6 +599,7 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
 
   const dropField = (zone: Zone, key: FieldKey) => {
     setConfig((c) => addField(c, zone, key));
+    setFilterSel((s) => ({ ...s, [key]: undefined })); // a field newly (re)placed starts unrestricted
     setSort(null);
   };
   const toggleSort = (id: string) =>
@@ -503,7 +621,14 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
   function describeConfig() {
     const r = config.rows.map((f) => FIELDS[f].label).join(" › ") || "—";
     const c = config.columns.map((f) => FIELDS[f].label).join(" › ") || "—";
-    return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Period: ${monthFrom} to ${monthTo}`;
+    const f = config.filters
+      .map((k) => {
+        const sel = filterSel[k];
+        return sel === undefined ? null : `${FIELDS[k].label} (${sel.length} of ${filterValues.get(k)?.length ?? "?"})`;
+      })
+      .filter(Boolean)
+      .join(", ");
+    return `Rows: ${r}  |  Columns: ${c}  |  Division: ${division || "All"}  |  Period: ${monthFrom} to ${monthTo}${f ? `  |  Filters: ${f}` : ""}`;
   }
 
   async function exportXlsx() {
@@ -629,8 +754,10 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
 
   // Every field is available to every zone, and picking one for a zone removes it from the
   // others' "+ Add" lists — the same pool is passed to all three pickers.
-  const usedFields = new Set<FieldKey>([...config.rows, ...config.columns, ...config.values]);
+  const usedFields = new Set<FieldKey>([...config.rows, ...config.columns, ...config.values, ...config.filters]);
   const availableFields = ALL_FIELDS.filter((f) => !usedFields.has(f.key));
+  // Derived ratios (TPR, API, …) have no meaningful list of discrete values to tick, so they aren't offered as filters.
+  const filterOptions = availableFields.filter((f) => f.tone !== "indicator");
 
   return (
     <div className="space-y-3">
@@ -669,6 +796,27 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           }))}
           options={availableFields}
           onAdd={(key) => dropField("values", key as FieldKey)}
+        />
+        <div className="h-6 w-px bg-slate-200" aria-hidden />
+        <FieldPickerGroup
+          label="Filters"
+          hint="Optional — restrict the report to chosen values of a field (leave empty for no filter)"
+          customTags={config.filters.map((key) => (
+            <FilterTag
+              key={key}
+              label={FIELDS[key].label}
+              tone={toneOf(key)}
+              allValues={filterValues.get(key) ?? []}
+              selected={filterSel[key]}
+              onChange={(next) => setFilterSel((s) => ({ ...s, [key]: next }))}
+              onRemove={() => {
+                setConfig((c) => ({ ...c, filters: c.filters.filter((k) => k !== key) }));
+                setFilterSel((s) => ({ ...s, [key]: undefined }));
+              }}
+            />
+          ))}
+          options={filterOptions}
+          onAdd={(key) => dropField("filters", key as FieldKey)}
         />
         <span className="ml-auto text-[11px] text-slate-400">
           API &amp; ABER use population from <b>{dataset.populationSource ?? "— (not imported)"}</b>
@@ -721,6 +869,8 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
             type="button"
             onClick={() => {
               setConfig(DEFAULT_CONFIG);
+              setFilterSel({});
+              setHideTotals(false);
               setSort(null);
               setQuery("");
               setDivision("");
@@ -731,6 +881,21 @@ export default function PivotTab({ dataset }: { dataset: MisDataset }) {
           >
             Reset
           </button>
+          <label
+            className={`flex items-center gap-1.5 text-xs ${config.columns.length ? "cursor-pointer text-slate-700" : "cursor-not-allowed text-slate-400"}`}
+            title={config.columns.length ? "Hide the Grand total column(s) at the end of each row — the individual column data stays" : "Needs a field in Columns — without one, each value column is already the row total"}
+          >
+            <input
+              type="checkbox"
+              checked={hideTotals && config.columns.length > 0}
+              disabled={config.columns.length === 0}
+              onChange={(e) => {
+                setHideTotals(e.target.checked);
+                setSort(null);
+              }}
+            />
+            Hide total columns
+          </label>
           <span className="ml-auto text-xs text-slate-500">
             {rows.length.toLocaleString("en-US")} rows × {valueColumns.length.toLocaleString("en-US")} value columns
           </span>
