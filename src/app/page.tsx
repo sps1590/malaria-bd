@@ -33,6 +33,8 @@ const TABS: { id: Tab; label: string }[] = [
 /** Tabs that work on the in-browser dataset for the selected year range. */
 const DATA_TABS = new Set<Tab>(["pivot", "bi", "epi"]);
 const DEFAULT_SPAN_YEARS = 5;
+/** The Epidemiology tab needs long history (endemic channel, signals, seasonality), so it opens on every year. */
+const FULL_HISTORY_FROM = 2012;
 
 type DbRow = {
   upazila_id: number;
@@ -102,7 +104,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   const tab: Tab = TABS.some((t) => t.id === params.tab) ? (params.tab as Tab) : "overview";
   const needsData = DATA_TABS.has(tab);
   const toParam = parseYear(params.to) ?? new Date().getFullYear();
-  const fromParam = parseYear(params.from) ?? toParam - (DEFAULT_SPAN_YEARS - 1);
+  const fromParam = parseYear(params.from) ?? (tab === "epi" ? FULL_HISTORY_FROM : toParam - (DEFAULT_SPAN_YEARS - 1));
   const from = Math.min(fromParam, toParam);
   const to = Math.max(fromParam, toParam);
 
@@ -119,7 +121,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   const yearOptions = [...new Set([...(dataset?.years ?? []), ...range(from, to)])].sort((a, b) => a - b);
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-900">
+    <main className="min-h-screen overflow-x-clip bg-slate-100 text-slate-900">
       <header className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 text-white">
         <TopBar />
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-6 pt-4">

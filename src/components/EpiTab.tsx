@@ -1,310 +1,133 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Icon, PopoutCard } from "@/components/ChartTools";
-import {
-  Area,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ComposedChart,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { GRID, SERIES, STATUS, SURFACE, axisTick, fmtInt, fmtNum, tooltipValue } from "@/lib/chart-theme";
-import {
-  UNASSIGNED_DIVISION,
-  decodeDataset,
-  groupTotals,
-  measureValue,
-  percentOf,
-  testPositivityRate,
-  totalsOf,
-  type MisDataset,
-  type MisRecord,
-} from "@/lib/malaria-metrics";
+import { useMemo, useState } from "react";
+import EpiClinical from "@/components/epi/EpiClinical";
+import EpiMethods from "@/components/epi/EpiMethods";
+import EpiPeople from "@/components/epi/EpiPeople";
+import EpiPlace from "@/components/epi/EpiPlace";
+import EpiSummary from "@/components/epi/EpiSummary";
+import EpiTime from "@/components/epi/EpiTime";
+import type { EpiModel } from "@/components/epi/model";
+import { areaRows, endemicChannel, monthlySeries, periodLabel, recT, seasonality, windowTotals, yearlyRows } from "@/lib/epi-calc";
+import { UNASSIGNED_DIVISION, canonicalGeoName, decodeDataset, isEndemicDistrictKey, type MisDataset, type MisRecord } from "@/lib/malaria-metrics";
 
-interface EndemicResponse {
-  scope: string;
-  year: number;
-  latestMonth: number;
-  baselineYears: number[];
-  months: { month: number; label: string; q1: number; median: number; q3: number; threshold: number; current: number | null; previous: number }[];
-}
+const SECTIONS = [
+  { id: "epi-summary", label: "Summary" },
+  { id: "epi-time", label: "Time" },
+  { id: "epi-place", label: "Place" },
+  { id: "epi-people", label: "People" },
+  { id: "epi-clinical", label: "Clinical" },
+  { id: "epi-surveillance", label: "Surveillance" },
+  { id: "epi-methods", label: "Methods" },
+];
 
+/**
+ * Epidemiology tab — a malaria situation-analysis report built from the loaded MIS records: key findings,
+ * time (trend, endemic channel, outbreak signals, seasonality), place (league table, concentration, strata,
+ * elimination status), people (species, age, sex), clinical outcomes and surveillance quality.
+ */
 export default function EpiTab({ dataset }: { dataset: MisDataset }) {
   const records = useMemo(() => decodeDataset(dataset), [dataset]);
   const [division, setDivision] = useState("");
   const [district, setDistrict] = useState("");
-  const [endemic, setEndemic] = useState<EndemicResponse | null>(null);
+  const [endemicOnly, setEndemicOnly] = useState(false);
 
   const divisions = useMemo(() => [...new Set(records.map((r) => r.divisionName))].filter((d) => d !== UNASSIGNED_DIVISION).sort(), [records]);
-  const districts = useMemo(
-    () => [...new Set(records.filter((r) => r.divisionName === division).map((r) => r.districtName))].sort(),
-    [records, division],
-  );
-  const scoped = useMemo(
-    () => records.filter((r) => (!division || r.divisionName === division) && (!district || r.districtName === district)),
-    [records, division, district],
+  const districts = useMemo(() => {
+    const names = new Set<string>();
+    for (const r of records) {
+      if (division && r.divisionName !== division) continue;
+      if (endemicOnly && !isEndemicDistrictKey(canonicalGeoName(r.districtName))) continue;
+      names.add(r.districtName);
+    }
+    return [...names].sort();
+  }, [records, division, endemicOnly]);
+
+  const scoped = useMemo<MisRecord[]>(
+    () =>
+      records.filter(
+        (r) =>
+          (!division || r.divisionName === division) &&
+          (!district || r.districtName === district) &&
+          (!endemicOnly || isEndemicDistrictKey(canonicalGeoName(r.districtName))),
+      ),
+    [records, division, district, endemicOnly],
   );
 
-  useEffect(() => {
-    const qs = district ? `area=${encodeURIComponent(district)}&level=district` : division ? `area=${encodeURIComponent(division)}&level=division` : "level=national";
-    let cancelled = false;
-    fetch(`/api/insights/epi?${qs}`)
-      .then((r) => r.json() as Promise<EndemicResponse>)
-      .then((j) => !cancelled && setEndemic(j))
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
+  const scopeLabel = district || [division, endemicOnly ? "endemic districts" : ""].filter(Boolean).join(" · ") || "Bangladesh";
+  const model = useMemo<EpiModel>(() => {
+    // "Now" is the newest month in the whole dataset, so every scope is judged on the same calendar.
+    const latest = records.reduce((p, r) => Math.max(p, recT(r)), 0);
+    const series = monthlySeries(scoped, latest);
+    const upazilaRows = areaRows(scoped, "upazila", latest);
+    const years = records.map((r) => r.year);
+    return {
+      scoped,
+      scopeLabel: endemicOnly && !division && !district ? "Endemic districts (13)" : scopeLabel,
+      latest,
+      latestLabel: periodLabel(latest),
+      last12Label: `${periodLabel(latest - 11)} – ${periodLabel(latest)}`,
+      series,
+      yearly: yearlyRows(scoped),
+      last12: windowTotals(scoped, latest, 0, 12),
+      prev12: windowTotals(scoped, latest, 12, 24),
+      districtRows: areaRows(scoped, "district", latest),
+      upazilaRows,
+      reportingUpazilas: upazilaRows.filter((u) => u.last12.rows > 0),
+      endemic: endemicChannel(series, latest),
+      seasonal: seasonality(series, latest),
+      populationSource: dataset.populationSource,
+      firstYear: years.length ? Math.min(...years) : 0,
+      lastYear: years.length ? Math.max(...years) : 0,
     };
-  }, [division, district]);
+  }, [records, scoped, scopeLabel, endemicOnly, division, district, dataset.populationSource]);
 
-  const years = useMemo(() => {
-    return [...groupTotals(scoped, (r) => r.year)]
-      .sort((a, b) => a[0] - b[0])
-      .map(([year, t]) => ({
-        year: String(year),
-        pf: t.pf, pv: t.pv, mixed: t.mixed,
-        active: t.acd, passive: t.pcd,
-        severe_pct: percentOf(t.severe, t.cases),
-        treated_pct: percentOf(t.treated, t.cases),
-        referred_pct: percentOf(t.referred, t.cases),
-        tpr: testPositivityRate(t.cases, t.tests),
-        api: measureValue(t, "api"),
-        aber: measureValue(t, "aber"),
-        cases: t.cases, deaths: t.deaths,
-      }));
-  }, [scoped]);
-
-  const totals = useMemo(() => totalsOf(scoped), [scoped]);
-  const ages = [
-    { group: "Under 1", cases: totals.ageLt1 },
-    { group: "1–4", cases: totals.age1to4 },
-    { group: "5–14", cases: totals.age5to14 },
-    { group: "15+", cases: totals.age15plus },
-  ];
-
-  const completeness = useMemo(() => {
-    const byMonth = new Map<string, Set<number>>();
-    for (const r of scoped) {
-      const key = `${r.year}-${String(r.month).padStart(2, "0")}`;
-      let set = byMonth.get(key);
-      if (!set) byMonth.set(key, (set = new Set()));
-      set.add(r.upazilaId);
-    }
-    return [...byMonth].sort((a, b) => a[0].localeCompare(b[0])).map(([period, set]) => ({ period, units: set.size }));
-  }, [scoped]);
-
-  const hotspots = useMemo(() => {
-    const latest = records.reduce((p, r) => Math.max(p, r.year * 12 + r.month - 1), 0);
-    const units = new Map<number, { name: string; district: string; months: number; last12: number; prev12: number }>();
-    for (const r of scoped) {
-      const age = latest - (r.year * 12 + r.month - 1);
-      if (age >= 24) continue;
-      let u = units.get(r.upazilaId);
-      if (!u) units.set(r.upazilaId, (u = { name: r.upazilaName, district: r.districtName, months: 0, last12: 0, prev12: 0 }));
-      if (r.cases > 0) u.months++;
-      if (age < 12) u.last12 += r.cases;
-      else u.prev12 += r.cases;
-    }
-    return [...units.values()].filter((u) => u.months > 0).sort((a, b) => b.months - a.months || b.last12 - a.last12).slice(0, 12);
-  }, [records, scoped]);
-
-  const aboveThreshold = endemic?.months.filter((m) => m.current !== null && m.current > m.threshold) ?? [];
-  const channel = endemic?.months.map((m) => ({ ...m, band: [m.q1, m.q3] })) ?? [];
-  const scopeLabel = district || division || "Bangladesh";
-  const period = years.length ? `${years[0].year}–${years[years.length - 1].year}` : "";
+  const placeLevel = district ? "upazila" : "district";
+  const earliest = dataset.years[0];
+  const short = model.firstYear > (earliest ?? model.firstYear);
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
-        <select value={division} onChange={(e) => { setDivision(e.target.value); setDistrict(""); }} className="rounded border border-slate-300 px-2 py-1.5" aria-label="Division">
-          <option value="">All divisions</option>
-          {divisions.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <select value={district} onChange={(e) => setDistrict(e.target.value)} disabled={!division} className="rounded border border-slate-300 px-2 py-1.5 disabled:opacity-50" aria-label="District">
-          <option value="">{division ? "All districts" : "District…"}</option>
-          {districts.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <span className="text-xs text-slate-500">Panels below cover <b>{scopeLabel}</b>, {period} (year range from the header). The endemic channel always uses the latest 6 years.</span>
-      </div>
-
-      <PopoutCard
-        title={`Endemic channel — ${endemic?.scope ?? scopeLabel}, ${endemic?.year ?? ""}`}
-        downloadName={`endemic-channel-${scopeLabel}`}
-        headerExtra={
-          <p className="text-xs text-slate-500">
-            Shaded band = interquartile range of monthly cases in {endemic?.baselineYears[0]}–{endemic?.baselineYears[endemic.baselineYears.length - 1]} (WHO quartile method); red line = epidemic threshold (mean + 2 SD).
-          </p>
-        }
-      >
-        {(big) => (
-          <>
-            {aboveThreshold.length > 0 ? (
-              <span className="mb-2 inline-block rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-800">
-                ⚠ Above epidemic threshold: {aboveThreshold.map((m) => m.label).join(", ")}
-              </span>
-            ) : endemic ? (
-              <span className="mb-2 inline-block rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">✓ No month above the epidemic threshold</span>
-            ) : null}
-            <div className={big ? "h-[65vh]" : "h-72"}>
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={channel} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                  <CartesianGrid vertical={false} stroke={GRID} />
-                  <XAxis dataKey="label" tick={axisTick} />
-                  <YAxis tick={axisTick} width={48} />
-                  <Tooltip formatter={tooltipValue} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area dataKey="band" name="Usual range (Q1–Q3)" stroke="none" fill={SERIES[0]} fillOpacity={0.15} isAnimationActive={false} />
-                  <Line dataKey="median" name="Median" stroke="#898781" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                  <Line dataKey="threshold" name="Epidemic threshold" stroke={STATUS.critical} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                  <Line dataKey="previous" name={`${(endemic?.year ?? 0) - 1}`} stroke={SERIES[1]} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                  <Line dataKey="current" name={`${endemic?.year ?? ""}`} stroke={SERIES[0]} strokeWidth={2.5} dot={{ r: 4, stroke: SURFACE, strokeWidth: 2 }} isAnimationActive={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
-      </PopoutCard>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Parasite species by year" note="P. falciparum causes most severe disease; mixed = both species.">
-          <BarChart data={years} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid vertical={false} stroke={GRID} />
-            <XAxis dataKey="year" tick={axisTick} />
-            <YAxis tick={axisTick} width={48} />
-            <Tooltip formatter={tooltipValue} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="pf" name="P. falciparum" stackId="s" fill={SERIES[0]} stroke={SURFACE} strokeWidth={1} isAnimationActive={false} />
-            <Bar dataKey="pv" name="P. vivax" stackId="s" fill={SERIES[1]} stroke={SURFACE} strokeWidth={1} isAnimationActive={false} />
-            <Bar dataKey="mixed" name="Mixed" stackId="s" fill={SERIES[2]} stroke={SURFACE} strokeWidth={1} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-          </BarChart>
-        </Panel>
-
-        <Panel title="Case detection mode by year" note="Active case detection (ACD) = community/household screening; passive (PCD) = patients presenting at facilities.">
-          <BarChart data={years} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid vertical={false} stroke={GRID} />
-            <XAxis dataKey="year" tick={axisTick} />
-            <YAxis tick={axisTick} width={48} />
-            <Tooltip formatter={tooltipValue} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="passive" name="Passive (PCD)" stackId="d" fill={SERIES[0]} stroke={SURFACE} strokeWidth={1} isAnimationActive={false} />
-            <Bar dataKey="active" name="Active (ACD)" stackId="d" fill={SERIES[1]} stroke={SURFACE} strokeWidth={1} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-          </BarChart>
-        </Panel>
-
-        <Panel title={`Cases by age group — ${scopeLabel}, ${period}`}>
-          <BarChart data={ages} layout="vertical" margin={{ top: 8, right: 24, bottom: 0, left: 8 }}>
-            <CartesianGrid horizontal={false} stroke={GRID} />
-            <XAxis type="number" tick={axisTick} />
-            <YAxis type="category" dataKey="group" tick={axisTick} width={56} />
-            <Tooltip formatter={tooltipValue} />
-            <Bar dataKey="cases" name="Cases" fill={SERIES[0]} radius={[0, 4, 4, 0]} isAnimationActive={false} />
-          </BarChart>
-        </Panel>
-
-        <PopoutCard title={`Who is affected & how cases are managed — ${period}`}>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Tile label="Male" value={`${fmtNum(percentOf(totals.male, totals.male + totals.female), 0)}%`} detail={`${fmtInt(totals.male)} cases`} />
-            <Tile label="Female" value={`${fmtNum(percentOf(totals.female, totals.male + totals.female), 0)}%`} detail={`${fmtInt(totals.female)} cases`} />
-            <Tile label="Pregnant women" value={fmtInt(totals.pregnant)} detail="cases" />
-            <Tile danger label="Deaths" value={fmtInt(totals.deaths)} detail={`CFR ${fmtNum(percentOf(totals.deaths, totals.cases), 2)}%`} />
-          </div>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead className="text-left text-slate-500">
-                <tr><th className="py-1 font-medium">Year</th><th className="py-1 text-right font-medium">Cases</th><th className="py-1 text-right font-medium">API</th><th className="py-1 text-right font-medium">ABER</th><th className="py-1 text-right font-medium">TPR</th><th className="py-1 text-right font-medium">Severe</th><th className="py-1 text-right font-medium">Treated</th><th className="py-1 text-right font-medium">Referred</th><th className="py-1 text-right font-medium text-red-700">Deaths</th></tr>
-              </thead>
-              <tbody>
-                {years.map((y) => (
-                  <tr key={y.year} className="border-t border-slate-100 tabular-nums">
-                    <td className="py-1">{y.year}</td>
-                    <td className="py-1 text-right">{fmtInt(y.cases)}</td>
-                    <td className="py-1 text-right">{fmtNum(y.api, 2)}</td>
-                    <td className="py-1 text-right">{fmtNum(y.aber, 1)}%</td>
-                    <td className="py-1 text-right">{fmtNum(y.tpr, 2)}%</td>
-                    <td className="py-1 text-right">{fmtNum(y.severe_pct)}%</td>
-                    <td className="py-1 text-right">{fmtNum(y.treated_pct)}%</td>
-                    <td className="py-1 text-right">{fmtNum(y.referred_pct)}%</td>
-                    <td className={`py-1 text-right ${y.deaths ? "font-semibold text-red-700" : ""}`}>{fmtInt(y.deaths)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="mt-1 text-[11px] text-slate-500">
-              API (per 1,000) and ABER (% tested) use population at risk from{" "}
-              <b>{dataset.populationSource ?? "— (population workbook not imported)"}</b>; areas outside its 77 upazilas show “—”.
-            </p>
-          </div>
-        </PopoutCard>
-
-        <Panel title="Reporting completeness" note="Reporting units (upazilas and facilities) that submitted a monthly MIS report — drops can signal missing data, not fewer cases.">
-          <LineChart data={completeness} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid vertical={false} stroke={GRID} />
-            <XAxis dataKey="period" tick={axisTick} minTickGap={36} />
-            <YAxis tick={axisTick} width={40} allowDecimals={false} />
-            <Tooltip formatter={tooltipValue} />
-            <Line dataKey="units" name="Reporting units" stroke={SERIES[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
-          </LineChart>
-        </Panel>
-
-        <PopoutCard
-          title="Persistent hotspots — last 24 months"
-          headerExtra={<p className="text-xs text-slate-500">Reporting units ranked by the number of months with at least one case; trend compares the last 12 months with the 12 before.</p>}
-        >
-          <table className="min-w-full text-xs">
-            <thead className="text-left text-slate-500">
-              <tr><th className="py-1 font-medium">Area</th><th className="py-1 text-right font-medium">Months with cases</th><th className="py-1 text-right font-medium">Last 12 mo</th><th className="py-1 text-right font-medium">Trend</th></tr>
-            </thead>
-            <tbody>
-              {hotspots.map((h) => {
-                const change = percentOf(h.last12 - h.prev12, h.prev12);
-                return (
-                  <tr key={`${h.district}-${h.name}`} className="border-t border-slate-100">
-                    <td className="py-1"><span className="font-medium text-slate-800">{h.name}</span> <span className="text-slate-500">· {h.district}</span></td>
-                    <td className="py-1 text-right tabular-nums">{h.months}/24</td>
-                    <td className="py-1 text-right tabular-nums">{fmtInt(h.last12)}</td>
-                    <td className={`py-1 text-right tabular-nums ${change !== null && change < 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                      {change === null ? "new" : `${change < 0 ? "▼" : "▲"} ${fmtNum(Math.abs(change), 0)}%`}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </PopoutCard>
-      </div>
-    </div>
-  );
-}
-
-function Panel({ title, note, children }: { title: string; note?: string; children: React.ReactElement }) {
-  return (
-    <PopoutCard title={title} headerExtra={note && <p className="text-xs text-slate-500">{note}</p>}>
-      {(big) => (
-        <div className={big ? "h-[65vh]" : "h-64"}>
-          <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+    <div className="space-y-6">
+      <div className="z-30 -mx-1 sm:sticky sm:top-0 space-y-2 rounded-xl border border-slate-200 bg-white/95 p-2.5 text-sm shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={division} onChange={(e) => { setDivision(e.target.value); setDistrict(""); }} className="rounded border border-slate-300 px-2 py-1.5" aria-label="Division">
+            <option value="">All divisions</option>
+            {divisions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select value={district} onChange={(e) => setDistrict(e.target.value)} className="max-w-44 rounded border border-slate-300 px-2 py-1.5" aria-label="District">
+            <option value="">All districts</option>
+            {districts.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <label className="flex cursor-pointer items-center gap-1.5 rounded border border-slate-300 px-2 py-1.5 text-xs text-slate-700" title="Bandarban, Rangamati, Khagrachhari, Cox's Bazar, Chattogram, Sylhet, Sunamganj, Habiganj, Moulvibazar, Mymensingh, Sherpur, Netrokona, Kurigram">
+            <input type="checkbox" checked={endemicOnly} onChange={(e) => { setEndemicOnly(e.target.checked); setDistrict(""); }} />
+            Endemic districts (13)
+          </label>
+          <span className="text-xs text-slate-500">
+            Scope: <b>{model.scopeLabel}</b> · data {model.firstYear}–{model.lastYear}, latest month <b>{model.latestLabel}</b>
+          </span>
+          <nav className="ml-auto flex flex-wrap gap-1" aria-label="Sections">
+            {SECTIONS.map((s) => (
+              <a key={s.id} href={`#${s.id}`} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700">
+                {s.label}
+              </a>
+            ))}
+          </nav>
         </div>
-      )}
-    </PopoutCard>
-  );
-}
-
-function Tile({ label, value, detail, danger = false }: { label: string; value: string; detail: string; danger?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${danger ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
-      <div className={`flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide ${danger ? "text-red-700" : "text-slate-500"}`}>
-        {danger && <Icon name="deaths" className="h-3.5 w-3.5" />}
-        {label}
+        {short && (
+          <p className="text-[11px] text-amber-700">
+            Showing {model.firstYear}–{model.lastYear} only. Long-term trends, the endemic channel and signal detection are richer with the full history — set “From” to {earliest} in the header.
+          </p>
+        )}
       </div>
-      <div className={`text-xl font-bold ${danger ? "text-red-700" : "text-slate-900"}`}>{value}</div>
-      <div className={`text-xs ${danger ? "text-red-700/80" : "text-slate-500"}`}>{detail}</div>
+
+      <div id="epi-summary" className="scroll-mt-14 space-y-3">
+        <EpiSummary m={model} />
+      </div>
+      <EpiTime m={model} />
+      <EpiPlace m={model} level={placeLevel} />
+      <EpiPeople m={model} />
+      <EpiClinical m={model} />
+      <EpiMethods m={model} />
     </div>
   );
 }
