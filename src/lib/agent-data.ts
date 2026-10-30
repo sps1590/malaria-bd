@@ -216,7 +216,7 @@ export async function malariaStats(input: StatsInput) {
 
 /* ------------------------------ Forecasts ------------------------------ */
 
-export async function getForecast(input: { area?: string; target?: "cases" | "deaths" }) {
+export async function getForecast(input: { area?: string; target?: "cases" | "deaths"; level?: Level }) {
   const sql = getSql();
   if (!(await tableExists(sql, "forecast_monthly"))) {
     return { available: false, note: "Forecasts have not been generated yet. Run: python pipeline/forecast.py" };
@@ -225,7 +225,7 @@ export async function getForecast(input: { area?: string; target?: "cases" | "de
   let level: Level = "national";
   let areaKey = "bangladesh";
   if (input.area) {
-    const area = resolveArea(await getAreaIndex(sql), input.area);
+    const area = resolveArea(await getAreaIndex(sql), input.area, input.level);
     if (!area || area.level === "upazila") {
       return { available: false, note: "Forecasts exist for Bangladesh, each division and each district (not upazilas)." };
     }

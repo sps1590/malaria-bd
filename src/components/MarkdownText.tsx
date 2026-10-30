@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 /** Minimal, XSS-safe Markdown for assistant answers: headings, lists, tables, bold/italic/code. */
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
-  // `\b_..._\b` keeps identifiers such as ANTHROPIC_API_KEY intact.
+  // `\b_..._\b` keeps snake_case identifiers intact.
   const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\b_[^_\s][^_]*_\b|\*[^*\s][^*]*\*)/g;
   let last = 0;
   let i = 0;

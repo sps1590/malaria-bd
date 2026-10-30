@@ -11,10 +11,10 @@
     "sync": "node --env-file-if-exists=.env.local scripts/sync.mjs",
     "geo:prepare": "node scripts/prepare-geo.mjs",
     "typecheck": "tsc --noEmit",
-    "seed:production": "node --env-file=.env.local scripts/seed-production.mjs"
+    "seed:production": "node --env-file=.env.local scripts/seed-production.mjs",
+    "verify:readonly": "node --env-file=.env.local scripts/verify-readonly.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.125.0",
     "@tanstack/react-virtual": "^3.14.12",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",

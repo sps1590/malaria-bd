@@ -15,7 +15,7 @@ Next.js 16 (App Router, React 19, TypeScript, Tailwind v4) · PostgreSQL · Pyth
 | **BI & GIS Map** | Drag-and-drop dashboard; every panel opens larger with Division → District → Upazila drill-down and downloads as PNG; cases/deaths/tests with forecast; map red means **> 1,000 cases** for divisions, **> 500** for districts, **> 200** for upazilas (0 cases ash-grey) |
 | **Pivot Analysis** | One-line field bar for Rows / Columns / Values — click "+ Add" to pop a list of the fields not already used elsewhere (a field picked for one disappears from the other two); *any* field works in *any* of the three, including measures (a measure placed in Rows/Columns groups by that record's own value) and places/time placed as a Value (counted as a distinct count); multiple nested fields per zone, an optional **Filters** zone (like Excel's — add any field, then tick the values to keep; leave it empty for no filter), a **Hide total columns** checkbox (drops the Grand-total column(s) while keeping each column's data), Division selector plus a multi-select **District** picker (default *All districts*; one tick for **Endemic Districts** = the 13 at-risk districts, or any of the 64 by name, combinable), a **Cases ≥ 1 only** checkbox that hides result rows with no confirmed cases, month date-range filter, virtualized grid, `.xlsx`/`.pdf` export (both honour the filters and the hidden totals). **View as** Table / Column / Bar / Stacked / Line / Area / Pie / Map — charts plot one chosen measure (rows = categories, columns = series, top-N rows), the map colours districts/divisions/upazilas by it. Downloads follow the view: **PNG** of the chart/map, **PDF** with the picture on page 1 then the table, **.xlsx** with the Pivot sheet plus a "Chart data"/"Map data" sheet of exactly what is plotted |
 | **Alerts** | Every reported death and every sudden surge (district/upazila cases > usual pattern + 50), email preview, delivery status |
-| **AI Analyst** | Chat that answers questions from the warehouse, forecasts, climate data and alerts |
+| **AI Analyst** | A free, read-only chat analyst: ask in plain words and it writes and runs the database queries for you, then answers with a narrative, a table, an auto-chosen chart, the exact SQL ("How I got this") and CSV download. Counts, rates and trends for any area and period; rankings with conditions ("districts with more than 100 cases"); comparisons and "which areas increased the most"; **why-analysis** of a change; unusual-rise detection; forecasts, weather, climate links, alerts, NSP targets; malaria definitions. Follow-ups work ("and deaths?", "what about Sylhet?"). Needs no API key and no paid service |
 
 Every table and chart on every tab — not just BI & GIS Map — can be downloaded as a PNG and opened
 larger in a full-screen view. The header shows a live clock in the viewer's own local time zone plus
@@ -115,13 +115,19 @@ python pipeline/import_quantification.py "C:/path/NSP-BAN quantification_1904202
 
 ## Optional features
 
-- **AI analyst (Claude):** create a key at console.anthropic.com and set `ANTHROPIC_API_KEY` (this is paid,
-  pay-as-you-go API usage — separate from a claude.ai subscription; there's no free tier). Without a key, the
-  built-in offline assistant still answers questions from the real data (cases/deaths/tests by any area and
-  year/month, rankings, monthly trends, forecasts, weather, alerts, NSP/API/ABER), including "this/last month"
-  and "this/last year" and explicit current-vs-previous comparisons ("cases in X compared to last year",
-  "deaths this month vs last month", "year-on-year change in Y") with the exact figures and % change for both
-  periods — it just can't answer open-ended questions outside those patterns the way the full AI can.
+- **AI analyst — free, no key, read-only.** It is a language-understanding engine that runs on your own
+  database (`src/lib/analyst/`), not a paid model: `nlu.ts` turns a question (plus the previous turn, for
+  follow-ups) into a structured request — measures, places incl. spelling variants and typos, period,
+  grouping, ranking, thresholds, comparison — `query.ts` builds a parameterised SELECT from a fixed catalogue
+  of whitelisted SQL expressions (`catalog.ts`; no user text is ever concatenated into SQL), and `stats.ts` /
+  `handlers.ts` write the answer. **It can never change data:** every query runs inside a Postgres
+  `READ ONLY` transaction with a 10-second timeout, requests to delete/update/insert are refused, and raw SQL
+  typed into the chat is not executed. Run `npm run verify:readonly` to prove the database rejects
+  DELETE/UPDATE/INSERT/DROP/CREATE/TRUNCATE in that mode. Limits: it understands the questions its
+  vocabulary covers (see the starter prompts and "What can you do?"); something outside that gets a "not
+  understood" with suggestions rather than a guess, and a place name it does not know is never silently
+  replaced by a national answer. Rates ranked across areas ignore areas with too few tests/cases (< 100 tests,
+  < 20 cases) because such rates are unreliable.
 - **Email alerts:** follow the steps on the Alerts tab (Gmail App Password → `GMAIL_USER`,
   `GMAIL_APP_PASSWORD`, `ALERT_EMAIL_TO`).
 - **API and ABER:** come from the imported population workbook (see above).
