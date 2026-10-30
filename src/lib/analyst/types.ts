@@ -23,6 +23,18 @@ export interface ChartSpec {
   format: "int" | "d1" | "d2" | "pct1" | "pct2";
 }
 
+/** A choropleth: the server picks classes and colours; the browser draws the boundaries of the chosen region. */
+export interface MapSpec {
+  title: string;
+  level: "division" | "district" | "upazila";
+  /** Only draw boundaries whose parent matches (canonical keys); null = all of Bangladesh. */
+  filter: { prop: "ADM1_EN" | "ADM2_EN"; keys: string[] } | null;
+  metricLabel: string;
+  rows: { key: string; name: string; value: number | null; color: string; tip: string }[];
+  legend: { color: string; label: string }[];
+  noData: string;
+}
+
 /** What the next question may inherit ("and deaths?", "what about Bandarban?", "by district"). */
 export interface AnalystContext {
   intent: string;
@@ -39,6 +51,7 @@ export interface AnalystReply {
   text: string;
   table?: TableSpec;
   chart?: ChartSpec;
+  map?: MapSpec;
   /** Parameter-inlined SQL that was run (for the "how I got this" panel). */
   sql: string[];
   /** How the question was understood, as label/value chips. */

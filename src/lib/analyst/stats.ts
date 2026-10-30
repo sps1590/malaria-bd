@@ -547,7 +547,7 @@ function presentRanking(plan: StatsPlan, b: Bundle, latestP: number): Presentati
     format: wantChange ? "int" : chartFormat(plan.primary),
   };
 
-  const sg: string[] = [`Monthly trend for ${topName}`];
+  const sg: string[] = ["Show this on a map", `Monthly trend for ${topName}`];
   if (rows.length > 1) sg.push(`Compare ${topName} and ${nm(rows[1].r.g)}`);
   sg.push(plan.shift === null ? "How does this compare with last year?" : "Show the same for deaths");
   return { text: withNotes(text, plan), table: { columns, rows: tableRows }, chart, suggestions: sg, empty: false };

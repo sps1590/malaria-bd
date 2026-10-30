@@ -13,7 +13,7 @@ import { makeTime, parseTime, type TimeSel } from "./time";
 import type { AnalystContext } from "./types";
 
 export type Intent =
-  | "stats" | "brief" | "explain" | "forecast" | "weather" | "climate" | "alerts" | "signals"
+  | "stats" | "map" | "brief" | "explain" | "forecast" | "weather" | "climate" | "alerts" | "signals"
   | "nsp" | "population" | "list" | "glossary" | "about" | "meta" | "greeting" | "thanks"
   | "refuse" | "rawsql" | "clarify";
 
@@ -93,6 +93,7 @@ const VOCAB = new Set<string>([
 /* ------------------------------ cue regexes ------------------------------ */
 
 const RE = {
+  map: /\b(?:maps?|mapped|mapping|choropleths?|heat ?maps?|geo ?maps?|gis|geographic(?:al)?(?:ly)?|spatial(?:ly)?|on the ground|where (?:are|is) (?:the )?(?:cases|malaria|hotspots?))\b/,
   greeting: /^(?:hi|hello|hey|hiya|salam|assalamu alaikum|assalamualaikum|namaste|good (?:morning|afternoon|evening)|greetings)\b[\s!.,]*(?:there|team|analyst|bot|assistant)?[\s!.,]*$/,
   thanks: /^(?:thanks|thank you|thx|ty|great|awesome|perfect|nice|cool|good job|well done|ok thanks|okay thanks|got it|brilliant|excellent|wonderful)\b[\s!.,a-z]{0,25}$/,
   about: /\b(?:what can you do|what do you do|what can i ask|who are you|what are you|your name|how do (?:i|you) use|how does this work|what (?:kind of )?(?:questions|things)|capabilities|are you (?:an? )?(?:ai|bot|human|real|robot|chatgpt|gpt|claude|llm)|which model|what model|are you free|do you cost|is this free|help)\b/,
@@ -131,6 +132,12 @@ const LEVEL_BY: [GroupKey, RegExp][] = [
   ["division", /\b(?:by|per|each|every|across|among|for each|wise|breakdown by|split by)\s+(?:the\s+)?divisions?\b|\bdivision[- ]?wise\b/],
   ["district", /\b(?:by|per|each|every|across|among|for each|wise|breakdown by|split by)\s+(?:the\s+)?(?:districts?|zilas?)\b|\bdistrict[- ]?wise\b/],
   ["upazila", /\b(?:by|per|each|every|across|among|for each|wise|breakdown by|split by)\s+(?:the\s+)?(?:upazilas?|upazillas?|thanas?)\b|\b(?:upazila|thana)[- ]?wise\b/],
+];
+/** "district-level", "at upazila level", "division map" */
+const LEVEL_AT: [GroupKey, RegExp][] = [
+  ["division", /\bdivision[- ]level\b|\bat (?:the )?division level\b|\bdivision (?:map|heat ?map)\b/],
+  ["district", /\bdistrict[- ]level\b|\bat (?:the )?district level\b|\bdistrict (?:map|heat ?map)\b/],
+  ["upazila", /\b(?:upazila|upazilla|thana)[- ]level\b|\bat (?:the )?(?:upazila|upazilla|thana) level\b|\b(?:upazila|upazilla|thana) (?:map|heat ?map)\b/],
 ];
 const LEVEL_WHICH: [GroupKey, RegExp][] = [
   ["division", /\b(?:which|what)\s+(?:is\s+the\s+|are\s+the\s+)?divisions?\b/],
@@ -285,6 +292,7 @@ export function parse(raw: string, ctx: AnalystContext | null, lk: AreaLookup, b
   const hasAvg = RE.avg.test(t) && RE.perMonth.test(t);
   if (hasAvg) p.agg = "avg_monthly";
   for (const [g, re] of LEVEL_BY) if (re.test(t)) { p.group = g; break; }
+  if (!p.group) for (const [g, re] of LEVEL_AT) if (re.test(t)) { p.group = g; break; }
   if (!p.group) for (const [g, re] of LEVEL_WHICH) if (re.test(t)) { p.group = g; p.groupLevel = g; break; }
   if (!p.group) {
     for (const [g, re] of TIME_GROUP_CUES) {
@@ -358,7 +366,8 @@ export function parse(raw: string, ctx: AnalystContext | null, lk: AreaLookup, b
   const sawSignals = RE.signals.test(t);
   const sawForecast = RE.forecast.test(t);
   const sawWeather = RE.weather.test(t);
-  if (sawAlerts) p.intent = "alerts";
+  if (RE.map.test(t) && !sawAlerts && !sawForecast && !RE.explain.test(t)) p.intent = "map";
+  else if (sawAlerts) p.intent = "alerts";
   else if (sawForecast) p.intent = "forecast";
   else if (sawSignals && !p.rank && !p.group && !p.groupLevel && p.metrics.every((k) => k === "cases" || k === "deaths")) p.intent = "signals";
   else if (sawWeather && RE.corr.test(t)) p.intent = "climate";
@@ -382,7 +391,7 @@ export function parse(raw: string, ctx: AnalystContext | null, lk: AreaLookup, b
     const ownAreas = p.areas.length > 0;
     const ownMetrics = hasMetric;
     // after a forecast / weather / why-analysis, "and deaths?" or "what about Sylhet?" keeps that task
-    const keepsTask = ["forecast", "weather", "climate", "explain", "signals"].includes(ctx.intent);
+    const keepsTask = ["forecast", "weather", "climate", "explain", "signals", "map"].includes(ctx.intent);
     if (p.intent === "clarify") {
       if (keepsTask || ["stats", "brief"].includes(ctx.intent)) p.intent = ctx.intent as Intent;
       p.inherited.push("task");
@@ -392,7 +401,7 @@ export function parse(raw: string, ctx: AnalystContext | null, lk: AreaLookup, b
     }
     if (p.intent === "forecast" && ownMetrics) p.forecastTarget = p.metrics.includes("deaths") ? "deaths" : "cases";
     if (p.intent === "brief" && !hasMetric && slotCount <= 1 && ctx.intent === "stats" && ownAreas) p.intent = "stats";
-    if (!hasMetric && ctx.metrics.length && ["stats", "brief", "explain"].includes(p.intent)) { p.metrics = [...ctx.metrics]; p.inherited.push("metric"); }
+    if (!hasMetric && ctx.metrics.length && ["stats", "brief", "explain", "map"].includes(p.intent)) { p.metrics = [...ctx.metrics]; p.inherited.push("metric"); }
     if (!p.areas.length && !p.nationalCue && ctx.areas.length) {
       const sels = ctx.areas.map((r) => selFromRef(lk, r)).filter((s): s is AreaSel => !!s);
       if (sels.length) { p.areas = sels; p.inherited.push("area"); }
@@ -404,6 +413,11 @@ export function parse(raw: string, ctx: AnalystContext | null, lk: AreaLookup, b
       p.inherited.push("period");
     }
     if (!p.group && !p.groupLevel && ctx.group && ctx.group !== "none" && !p.rank && p.intent === "stats" && slotCount <= 1 && (TIME_GROUPS.includes(ctx.group as GroupKey) || !ownAreas)) {
+      p.group = ctx.group as GroupKey;
+      p.inherited.push("grouping");
+    }
+    // "show it on a map" after a ranking by district keeps the district level
+    if (p.intent === "map" && !p.group && !p.groupLevel && !ownAreas && ["division", "district", "upazila"].includes(ctx.group ?? "")) {
       p.group = ctx.group as GroupKey;
       p.inherited.push("grouping");
     }

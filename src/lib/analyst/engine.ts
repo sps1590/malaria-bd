@@ -7,6 +7,7 @@ import { CAPABILITIES, STARTERS } from "./catalog";
 import { pretty, unitWord } from "./format";
 import { READ_ONLY_REPLY, RAW_SQL_REPLY } from "./guard";
 import * as H from "./handlers";
+import { mapReply } from "./maps";
 import { parse, type Intent, type Parsed } from "./nlu";
 import { newLog, type RunLog } from "./query";
 import { planStats, presentStats, runStats, type StatsPlan } from "./stats";
@@ -18,7 +19,7 @@ import type { AnalystContext, AnalystReply } from "./types";
 type Step = (label: string) => void;
 
 const INTENT_LABEL: Record<Intent, string> = {
-  stats: "Statistics", brief: "Situation brief", explain: "Why-analysis", forecast: "Forecast", weather: "Weather", climate: "Climate link",
+  stats: "Statistics", map: "Map", brief: "Situation brief", explain: "Why-analysis", forecast: "Forecast", weather: "Weather", climate: "Climate link",
   alerts: "Alerts", signals: "Unusual-rise check", nsp: "NSP targets", population: "Population", list: "List", glossary: "Definition",
   about: "About", meta: "Data info", greeting: "Hello", thanks: "Thanks", refuse: "Read-only", rawsql: "Plain language", clarify: "Not understood",
 };
@@ -89,14 +90,14 @@ export async function analyze(question: string, ctx: AnalystContext | null, step
     const partChips = (): AnalystReply["interpretation"] => {
       const c = chips(p, plan);
       if (plan) return c;
-      return c.filter((x) => x.label !== "Area" && x.label !== "Period").concat(part.scope ? [{ label: "Area", value: part.scope }] : p.areas.length ? [{ label: "Area", value: joinList(p.areas.map((a) => a.label)) }] : [{ label: "Area", value: "Bangladesh" }], part.period ? [{ label: "Period", value: part.period }] : p.time ? [{ label: "Period", value: p.time.label }] : []);
+      return c.filter((x) => x.label !== "Area" && x.label !== "Period" && !(part.measure && x.label === "Measure")).concat(part.measure ? [{ label: "Measure", value: part.measure }] : [], part.scope ? [{ label: "Area", value: part.scope }] : p.areas.length ? [{ label: "Area", value: joinList(p.areas.map((a) => a.label)) }] : [{ label: "Area", value: "Bangladesh" }], part.period ? [{ label: "Period", value: part.period }] : p.time ? [{ label: "Period", value: p.time.label }] : []);
     };
     const italic = (n: string) => `_${n.replace(/\*\*/g, "")}_`;
     const prefix = p.notes.filter((n) => n.startsWith("I read")).map(italic).join("\n");
     const other = p.notes.filter((n) => !n.startsWith("I read") && !part.text.includes(n) && !(p.intent === "alerts" && n.startsWith("“Recent”"))).map(italic).join("\n");
     const text = [prefix, part.text, other].filter(Boolean).join("\n\n");
     return reply(
-      { kind: part.kind ?? "answer", text, table: part.table, chart: part.chart, suggestions: part.suggestions, interpretation: extraChips ?? partChips(), context: contextOf(p, plan, bounds) },
+      { kind: part.kind ?? "answer", text, table: part.table, chart: part.chart, map: part.map, suggestions: part.suggestions, interpretation: extraChips ?? partChips(), context: contextOf(p, plan, bounds) },
       log,
       t0,
     );
@@ -122,7 +123,7 @@ export async function analyze(question: string, ctx: AnalystContext | null, step
   }
 
   // a place name we don't know must never silently turn into a national answer
-  if (p.unknownPlaces.length && !p.areas.length && !p.nationalCue && ["stats", "brief", "explain", "forecast", "weather", "climate", "signals", "nsp"].includes(p.intent)) {
+  if (p.unknownPlaces.length && !p.areas.length && !p.nationalCue && ["stats", "map", "brief", "explain", "forecast", "weather", "climate", "signals", "nsp"].includes(p.intent)) {
     return clarify(p, lk, t0, log);
   }
 
@@ -144,6 +145,7 @@ export async function analyze(question: string, ctx: AnalystContext | null, step
   step("Querying the database (read-only)");
   let part: H.Part;
   switch (p.intent) {
+    case "map": part = await mapReply(p, bounds, lk, log); break;
     case "brief": part = await H.brief(p, bounds, log); break;
     case "explain": part = await H.explain(p, bounds, log); break;
     case "signals": part = await H.signals(p, bounds, log); break;

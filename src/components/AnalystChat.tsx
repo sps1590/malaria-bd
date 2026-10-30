@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { DataChart, DataTable, tableToCsv } from "@/components/AnalystViz";
+import { AnalystMap, DataChart, DataTable, tableToCsv } from "@/components/AnalystViz";
 import { MarkdownText } from "@/components/MarkdownText";
 import { STARTERS } from "@/lib/analyst/catalog";
 import type { AnalystContext, AnalystEvent, AnalystReply } from "@/lib/analyst/types";
@@ -99,7 +99,9 @@ function AssistantBubble({ msg, onAsk, isLast, busy }: { msg: BotMsg; onAsk: (q:
   if (msg.error) return <p className="text-sm text-rose-700">{msg.error}</p>;
   if (!reply) return <Thinking steps={msg.steps} />;
 
-  const hasChart = !!reply.chart && reply.chart.rows.length > 0;
+  const hasMap = !!reply.map && reply.map.rows.length > 0;
+  const hasChart = !hasMap && !!reply.chart && reply.chart.rows.length > 0;
+  const hasVisual = hasMap || hasChart;
   const hasTable = !!reply.table && reply.table.rows.length > 0;
   const refusal = reply.kind === "refusal";
 
@@ -119,27 +121,28 @@ function AssistantBubble({ msg, onAsk, isLast, busy }: { msg: BotMsg; onAsk: (q:
         <MarkdownText text={balance(shown)} />
       </div>
 
-      {done && (hasChart || hasTable) && (
+      {done && (hasVisual || hasTable) && (
         <div className="space-y-2">
-          {hasChart && hasTable && (
+          {hasVisual && hasTable && (
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-slate-700">{reply.chart!.title}</p>
+              <p className="text-xs font-semibold text-slate-700">{hasMap ? "Map and table of the same figures" : reply.chart!.title}</p>
               <div className="flex overflow-hidden rounded-md border border-slate-200 text-[11px]">
                 {(["chart", "table"] as const).map((v) => (
                   <button key={v} type="button" onClick={() => setView(v)} className={`px-2.5 py-1 ${view === v ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
-                    {v === "chart" ? "Chart" : "Table"}
+                    {v === "chart" ? (hasMap ? "Map" : "Chart") : "Table"}
                   </button>
                 ))}
               </div>
             </div>
           )}
+          {hasMap && (view === "chart" || !hasTable) && <AnalystMap map={reply.map!} />}
           {hasChart && (view === "chart" || !hasTable) && (
             <div className="rounded-lg border border-slate-200 bg-white p-2">
               {!hasTable && <p className="px-1 pb-1 text-xs font-semibold text-slate-700">{reply.chart!.title}</p>}
               <DataChart chart={reply.chart!} />
             </div>
           )}
-          {hasTable && (view === "table" || !hasChart) && <DataTable table={reply.table!} />}
+          {hasTable && (view === "table" || !hasVisual) && <DataTable table={reply.table!} />}
         </div>
       )}
 
@@ -196,6 +199,7 @@ export default function AnalystChat() {
   const hydrated = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const ownTop = useRef(-1);
   const [ideas, setIdeas] = useState(false);
 
   // restore the conversation (the tab unmounts when you switch tabs)
@@ -235,7 +239,10 @@ export default function AnalystChat() {
     const content = contentRef.current;
     if (!box || !content || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (stick.current && content.dataset.chat === "1") box.scrollTop = box.scrollHeight;
+      if (stick.current && content.dataset.chat === "1") {
+        box.scrollTop = box.scrollHeight;
+        ownTop.current = box.scrollTop; // the scroll event this causes must not count as the reader scrolling away
+      }
     });
     ro.observe(content);
     return () => ro.disconnect();
@@ -334,6 +341,7 @@ export default function AnalystChat() {
         ref={scroller}
         onScroll={(e) => {
           const el = e.currentTarget;
+          if (Math.abs(el.scrollTop - ownTop.current) < 2) return;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
         className="flex-1 overflow-y-auto p-4"

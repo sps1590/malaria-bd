@@ -19,7 +19,7 @@ import { arrowPct, fmtN, joinList, pctChange, pluralize } from "./text";
 import { SHORT, labelRange, monthOfP, plabel, pOf, yearOfP } from "./time";
 import type { AnalystReply, Cell, ChartSpec, TableSpec } from "./types";
 
-export type Part = Pick<AnalystReply, "text" | "suggestions"> & Partial<Pick<AnalystReply, "table" | "chart" | "kind">> & { scope?: string; period?: string };
+export type Part = Pick<AnalystReply, "text" | "suggestions"> & Partial<Pick<AnalystReply, "table" | "chart" | "map" | "kind">> & { scope?: string; period?: string; measure?: string };
 
 const num = (row: AggRow | undefined, key: string): number | null => (typeof row?.[key] === "number" ? (row[key] as number) : null);
 const scopeLabel = (a?: AreaSel) => a?.label ?? "Bangladesh";

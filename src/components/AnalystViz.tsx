@@ -1,9 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import "leaflet/dist/leaflet.css";
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { FeatureCollection } from "geojson";
+import type { Map as LeafletMap, Path as LeafletPath } from "leaflet";
+import { captureNodePng, downloadDataUrl } from "@/components/ChartTools";
 import { GRID, SERIES, axisTick, fmtInt, fmtNum } from "@/lib/chart-theme";
-import type { Cell, CellFormat, ChartSpec, TableSpec } from "@/lib/analyst/types";
+import { canonicalGeoName, upazilaMatchKey } from "@/lib/malaria-metrics";
+import type { Cell, CellFormat, ChartSpec, MapSpec, TableSpec } from "@/lib/analyst/types";
+
+type Leaflet = typeof import("leaflet");
 
 export function formatCell(v: Cell | undefined, format: CellFormat | undefined): string {
   if (v === null || v === undefined) return "—";
@@ -147,6 +155,170 @@ export function DataChart({ chart }: { chart: ChartSpec }) {
           </BarChart>
         )}
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ------------------------------- map -------------------------------- */
+
+const GEO_URL: Record<MapSpec["level"], string> = {
+  division: "/geo/bd-divisions.geojson",
+  district: "/geo/bd-districts.geojson",
+  upazila: "/geo/bd-upazilas.geojson",
+};
+const NAME_PROP: Record<MapSpec["level"], string> = { division: "ADM1_EN", district: "ADM2_EN", upazila: "ADM3_EN" };
+const geoCache = new Map<string, Promise<FeatureCollection>>();
+
+function loadGeo(url: string): Promise<FeatureCollection> {
+  let pending = geoCache.get(url);
+  if (!pending) {
+    pending = fetch(url).then(async (res) => {
+      if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
+      return (await res.json()) as FeatureCollection;
+    });
+    pending.catch(() => geoCache.delete(url));
+    geoCache.set(url, pending);
+  }
+  return pending;
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+
+/** Choropleth of the region the user asked for: boundaries from /public/geo, colours chosen by the server. */
+export function AnalystMap({ map }: { map: MapSpec }) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [info, setInfo] = useState<{ unmatched: number; drawn: number; error?: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  // draw only once scrolled into view, so a long chat does not keep many Leaflet maps alive at once
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      queueMicrotask(() => setVisible(true));
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setVisible(true);
+        io.disconnect();
+      }
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    let disposed = false;
+    let leafletMap: LeafletMap | undefined;
+    let observer: ResizeObserver | undefined;
+    (async () => {
+      const [mod, data] = await Promise.all([import("leaflet"), loadGeo(GEO_URL[map.level])]);
+      const host = hostRef.current;
+      if (disposed || !host) return;
+      const L = (mod as unknown as { default?: Leaflet }).default ?? (mod as Leaflet);
+
+      const rows = new Map(map.rows.map((r) => [r.key, r]));
+      const keyOf = (props: Record<string, unknown> | null | undefined) =>
+        map.level === "upazila"
+          ? `${canonicalGeoName(String(props?.ADM2_EN ?? ""))}|${upazilaMatchKey(String(props?.ADM3_EN ?? ""))}`
+          : canonicalGeoName(String(props?.[NAME_PROP[map.level]] ?? ""));
+      const allow = map.filter ? new Set(map.filter.keys) : null;
+      const features = data.features.filter((f) => !allow || allow.has(canonicalGeoName(String(f.properties?.[map.filter!.prop] ?? ""))));
+      if (!features.length) throw new Error("no boundaries for this region");
+
+      const m = L.map(host, { center: [23.7, 90.35], zoom: 7, zoomSnap: 0.25, scrollWheelZoom: false, zoomAnimation: false });
+      leafletMap = m;
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        opacity: 0.35,
+        crossOrigin: "anonymous",
+        attribution: "&copy; OpenStreetMap contributors · Boundaries: geoBoundaries",
+      }).addTo(m);
+      m.on("click", () => m.scrollWheelZoom.enable());
+      m.on("mouseout", () => m.scrollWheelZoom.disable());
+
+      const matched = new Set<string>();
+      const layer = L.geoJSON({ type: "FeatureCollection", features } as FeatureCollection, {
+        style: (feature) => ({
+          color: "#57534e",
+          weight: map.level === "upazila" ? 0.7 : 1,
+          fillOpacity: 0.88,
+          fillColor: rows.get(keyOf(feature?.properties))?.color ?? map.noData,
+        }),
+        onEachFeature: (feature, lyr) => {
+          const key = keyOf(feature.properties);
+          const row = rows.get(key);
+          if (row) matched.add(key);
+          const fallback = String(feature.properties?.[NAME_PROP[map.level]] ?? "");
+          lyr.bindTooltip(`<strong>${escapeHtml(row?.name ?? fallback)}</strong><br/>${escapeHtml(row?.tip ?? "No reports in this period")}`, { sticky: true });
+          lyr.on({
+            mouseover: (e) => (e.target as LeafletPath).setStyle({ weight: 2.5, color: "#0f172a" }),
+            mouseout: (e) => layer.resetStyle(e.target as LeafletPath),
+          });
+        },
+      }).addTo(m);
+
+      const bounds = layer.getBounds();
+      m.invalidateSize();
+      m.fitBounds(bounds, { padding: [12, 12], maxZoom: 11 });
+      observer = new ResizeObserver(() => {
+        m.invalidateSize();
+        m.fitBounds(bounds, { padding: [12, 12], maxZoom: 11 });
+      });
+      observer.observe(host);
+      setInfo({ drawn: features.length, unmatched: map.rows.filter((r) => !matched.has(r.key)).length });
+    })().catch((err: unknown) => {
+      if (!disposed) setInfo({ drawn: 0, unmatched: 0, error: err instanceof Error ? err.message : String(err) });
+    });
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      leafletMap?.remove();
+    };
+  }, [map, visible]);
+
+  const savePng = async () => {
+    if (!frameRef.current || saving) return;
+    setSaving(true);
+    try {
+      downloadDataUrl(await captureNodePng(frameRef.current), `map-${map.metricLabel}-${map.level}`);
+    } catch {
+      /* the tile layer may block capture offline; the table download still works */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-slate-700">{map.title}</p>
+        <button type="button" onClick={() => void savePng()} disabled={saving || !!info?.error} className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+          {saving ? "Saving…" : "Download PNG"}
+        </button>
+      </div>
+      <div ref={frameRef} className="relative isolate h-[420px] w-full overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div ref={hostRef} className="h-full w-full bg-slate-50" />
+        <div className="pointer-events-none absolute bottom-2 left-2 z-[1000] rounded bg-white/90 p-2 text-[11px] shadow">
+          <div className="mb-1 font-semibold text-slate-700">{map.metricLabel}</div>
+          {[...map.legend, { color: map.noData, label: "No data" }].map((item) => (
+            <div key={item.label + item.color} className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-4 rounded-sm border border-slate-300" style={{ background: item.color }} />
+              {item.label}
+            </div>
+          ))}
+        </div>
+        {!info && <div className="absolute inset-0 z-[1000] flex items-center justify-center bg-white/60 text-xs text-slate-500">Drawing map…</div>}
+        {info?.error && (
+          <div className="absolute inset-x-2 top-2 z-[1000] rounded bg-amber-50 p-2 text-xs text-amber-800 shadow">Map could not be drawn ({info.error}). The table has the same figures.</div>
+        )}
+      </div>
+      {info && !info.error && info.unmatched > 0 && (
+        <p className="text-[11px] text-slate-500">{info.unmatched} reporting {info.unmatched === 1 ? "unit has" : "units have"} no boundary on the map (hospital/central units) — see the table.</p>
+      )}
     </div>
   );
 }

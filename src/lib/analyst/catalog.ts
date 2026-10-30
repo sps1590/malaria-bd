@@ -164,6 +164,7 @@ export const STARTERS: { title: string; prompts: string[] }[] = [
   { title: "Rankings", prompts: ["Top 10 upazilas by cases in the last 12 months", "Districts with more than 100 cases in 2025", "Which districts had deaths this year?"] },
   { title: "Compare", prompts: ["Compare Bandarban and Rangamati", "Which districts increased the most vs last year?", "Endemic districts cases 2025 vs 2024"] },
   { title: "Explain & predict", prompts: ["Why did cases change compared to last year?", "Forecast cases for Sylhet", "Does rainfall affect malaria in Rangamati?"] },
+  { title: "Maps", prompts: ["Make a map of cases in Bandarban district", "Map of deaths by district in 2025", "Upazila map of test positivity for the endemic districts"] },
   { title: "Surveillance", prompts: ["Any unusual rise in cases this month?", "Recent death and surge alerts", "Test positivity by division in 2025"] },
 ];
 

@@ -25,6 +25,8 @@ export interface AggQuery {
   limit?: number;
   /** Average of the monthly totals instead of the sum (additive metrics only). */
   avgMonthly?: boolean;
+  /** Upazila grouping only: also return the raw upazila (u) and district (d) names, for placing results on a map. */
+  withParts?: boolean;
 }
 
 const GROUP_SQL: Record<GroupKey, string | null> = {
@@ -99,10 +101,11 @@ ${q.limit ? `LIMIT ${ph(Math.min(Math.max(1, Math.floor(q.limit)), 5000), "int")
     .map((h) => `${h.metric.expr} ${h.op} ${ph(h.value, "float8")}`);
   for (const gd of q.guards ?? []) having.push(`${gd.expr} >= ${ph(gd.min, "float8")}`);
   const order = q.order?.by && q.order.by !== "group" ? `ORDER BY ${alias(q.order.by)} ${q.order.dir === "asc" ? "ASC" : "DESC"} NULLS LAST${g ? ", g" : ""}` : g ? "ORDER BY g" : "";
-  const text = `SELECT ${g ? `${g} AS g,\n       ` : ""}${select}
+  const parts = !!q.withParts && q.group === "upazila";
+  const text = `SELECT ${g ? `${g} AS g,\n       ` : ""}${parts ? "m.upazila_name AS u, m.district_name AS d,\n       " : ""}${select}
 ${from}
 WHERE ${where.join("\n  AND ")}
-${g ? "GROUP BY 1" : ""}
+${g ? (parts ? "GROUP BY 1, 2, 3" : "GROUP BY 1") : ""}
 ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
 ${order}
 ${q.limit ? `LIMIT ${ph(Math.min(Math.max(1, Math.floor(q.limit)), 5000), "int")}` : ""}`;
@@ -130,6 +133,7 @@ export async function runAgg(q: AggQuery, log: RunLog, note?: string): Promise<A
   log.rows += res.rows.length;
   return res.rows.map((r) => {
     const row: AggRow = { g: (r.g as string | number | null | undefined) ?? null };
+    if (r.u !== undefined) { row.u = String(r.u); row.d = String(r.d); }
     for (const m of q.metrics) {
       const v = r[`m_${m.key}`];
       row[m.key] = v === null || v === undefined ? null : Number(v);
