@@ -204,20 +204,29 @@ ${appUrl ? `<p style="font-size:12px"><a href="${esc(appUrl)}">Open the Malaria 
 
 /* ------------------------------ Delivery ------------------------------- */
 
+/** ALERT_EMAIL_DRY_RUN=1 builds and "sends" the message without contacting Gmail (for testing the wiring). */
+export const emailDryRun = () => process.env.ALERT_EMAIL_DRY_RUN === "1";
+
 export function emailConfigured() {
-  return Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+  return emailDryRun() || Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
 }
 
+export const alertRecipient = () => process.env.ALERT_EMAIL_TO || DEFAULT_ALERT_EMAIL;
+
 async function sendEmail(message: { subject: string; html: string; text: string }) {
+  const from = `"Malaria MIS Alerts" <${process.env.GMAIL_USER ?? alertRecipient()}>`;
+  if (emailDryRun()) {
+    const transport = nodemailer.createTransport({ jsonTransport: true });
+    await transport.sendMail({ from, to: alertRecipient(), ...message });
+    console.log(`[alerts] DRY RUN — would email ${alertRecipient()}: ${message.subject}`);
+    return;
+  }
+  // Free Gmail SMTP with an app password (requires 2-Step Verification on the sending account).
   const transport = nodemailer.createTransport({
     service: "gmail",
     auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
   });
-  await transport.sendMail({
-    from: `"Malaria MIS Alerts" <${process.env.GMAIL_USER}>`,
-    to: process.env.ALERT_EMAIL_TO ?? DEFAULT_ALERT_EMAIL,
-    ...message,
-  });
+  await transport.sendMail({ from, to: alertRecipient(), ...message });
 }
 
 const ALERT_COLUMNS = [
@@ -225,17 +234,38 @@ const ALERT_COLUMNS = [
   "observed", "expected", "excess", "details", "status", "dedupe_key",
 ] as const;
 
+/** Statuses that mean "detected but never delivered" — retried on every run until an email goes out. */
+const UNSENT = ["new", "email_not_configured", "email_failed"];
+/** Unsent alerts older than this many reporting months are left alone, so an old backlog never floods the inbox. */
+const RETRY_WINDOW_MONTHS = 6;
+
 export interface AlertRunSummary {
   detected: number;
   created: number;
+  /** Alerts (new + earlier ones that never got delivered) included in the email. */
+  emailed: number;
   deaths: number;
   surges: number;
-  email: "sent" | "not_configured" | "nothing_new" | "seeded_without_email" | "failed";
+  email: "sent" | "not_configured" | "nothing_new" | "seeded_without_email" | "failed" | "dry_run";
   error?: string;
+}
+
+async function deliver(sql: Sql, alerts: AlertRecord[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ids = alerts.map((a) => a.id);
+  try {
+    await sendEmail(buildAlertEmail(alerts, process.env.APP_URL));
+    await sql`UPDATE alerts SET status = 'emailed', email_error = NULL WHERE id IN ${sql(ids)}`;
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await sql`UPDATE alerts SET status = 'email_failed', email_error = ${error} WHERE id IN ${sql(ids)}`;
+    return { ok: false, error };
+  }
 }
 
 /** Detect new death/surge alerts after a sync and email one combined digest. Never throws. */
 export async function runAlerts(sql: Sql): Promise<AlertRunSummary> {
+  const empty = { detected: 0, created: 0, emailed: 0, deaths: 0, surges: 0 };
   try {
     const [{ existing }] = await sql<{ existing: number }[]>`SELECT count(*)::int AS existing FROM alerts`;
     const candidates = [
@@ -244,8 +274,8 @@ export async function runAlerts(sql: Sql): Promise<AlertRunSummary> {
       ...(await findSurges(sql, "upazila")),
     ];
     // First ever run: record the current situation without emailing a backlog.
-    const initialStatus = existing === 0 ? "seeded" : "new";
-    const rows = candidates.map((a) => ({ ...a, details: JSON.stringify(a.details), status: initialStatus }));
+    const seeding = existing === 0;
+    const rows = candidates.map((a) => ({ ...a, details: JSON.stringify(a.details), status: seeding ? "seeded" : "new" }));
     const columns: (keyof (typeof rows)[number])[] = [...ALERT_COLUMNS];
     const created: AlertRecord[] = rows.length
       ? await sql<AlertRecord[]>`
@@ -253,32 +283,56 @@ export async function runAlerts(sql: Sql): Promise<AlertRunSummary> {
           ON CONFLICT (dedupe_key) DO NOTHING
           RETURNING *`
       : [];
+    const base = { ...empty, detected: candidates.length, created: created.length };
+    if (seeding) return { ...base, email: created.length ? "seeded_without_email" : "nothing_new" };
 
-    const summary: AlertRunSummary = {
-      detected: candidates.length,
-      created: created.length,
-      deaths: created.filter((a) => a.kind === "death").reduce((s, a) => s + a.observed, 0),
-      surges: created.filter((a) => a.kind === "surge").length,
-      email: "nothing_new",
+    // New alerts plus any earlier ones that were never delivered (e.g. Gmail was not set up yet, or a send failed).
+    const pending = await sql<AlertRecord[]>`
+      WITH latest AS (SELECT max(report_year * 12 + report_month - 1) AS p FROM alerts)
+      SELECT a.* FROM alerts a, latest
+      WHERE a.status IN ${sql(UNSENT)} AND a.report_year * 12 + a.report_month - 1 > latest.p - ${RETRY_WINDOW_MONTHS}
+      ORDER BY a.report_year, a.report_month, a.id`;
+    if (!pending.length) return { ...base, email: "nothing_new" };
+
+    const counts = {
+      ...base,
+      emailed: pending.length,
+      deaths: pending.filter((a) => a.kind === "death").reduce((s, a) => s + a.observed, 0),
+      surges: pending.filter((a) => a.kind === "surge").length,
     };
-    if (!created.length) return summary;
-    if (initialStatus === "seeded") return { ...summary, email: "seeded_without_email" };
-
-    const ids = created.map((a) => a.id);
     if (!emailConfigured()) {
-      await sql`UPDATE alerts SET status = 'email_not_configured' WHERE id IN ${sql(ids)}`;
-      return { ...summary, email: "not_configured" };
+      await sql`UPDATE alerts SET status = 'email_not_configured' WHERE id IN ${sql(pending.map((a) => a.id))}`;
+      return { ...counts, email: "not_configured" };
     }
-    try {
-      await sendEmail(buildAlertEmail(created, process.env.APP_URL));
-      await sql`UPDATE alerts SET status = 'emailed' WHERE id IN ${sql(ids)}`;
-      return { ...summary, email: "sent" };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await sql`UPDATE alerts SET status = 'email_failed', email_error = ${message} WHERE id IN ${sql(ids)}`;
-      return { ...summary, email: "failed", error: message };
-    }
+    const result = await deliver(sql, pending);
+    if (!result.ok) return { ...counts, email: "failed", error: result.error };
+    return { ...counts, email: emailDryRun() ? "dry_run" : "sent" };
   } catch (err) {
-    return { detected: 0, created: 0, deaths: 0, surges: 0, email: "failed", error: err instanceof Error ? err.message : String(err) };
+    return { ...empty, email: "failed", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Email the death alerts of the latest reporting months right now — including ones recorded before email was
+ * set up (the "seeded" baseline) and ones already emailed (set resend). Used by POST /api/alerts/send.
+ */
+export async function emailDeathsNow(sql: Sql, opts: { resend?: boolean } = {}): Promise<AlertRunSummary & { recipient: string }> {
+  const recipient = alertRecipient();
+  const empty = { detected: 0, created: 0, emailed: 0, deaths: 0, surges: 0 };
+  try {
+    const alerts = await sql<AlertRecord[]>`
+      WITH latest AS (SELECT max(report_year * 12 + report_month - 1) AS p FROM alerts WHERE kind = 'death')
+      SELECT a.* FROM alerts a, latest
+      WHERE a.kind = 'death' AND a.report_year * 12 + a.report_month - 1 > latest.p - ${ALERT_LOOKBACK_MONTHS}
+        ${opts.resend ? sql`` : sql`AND a.status <> 'emailed'`}
+      ORDER BY a.report_year, a.report_month, a.id`;
+    if (!alerts.length) return { ...empty, email: "nothing_new", recipient };
+    const counts = { ...empty, detected: alerts.length, emailed: alerts.length, deaths: alerts.reduce((s, a) => s + a.observed, 0) };
+    if (!emailConfigured()) return { ...counts, email: "not_configured", recipient };
+    const result = await deliver(sql, alerts);
+    if (!result.ok) return { ...counts, email: "failed", error: result.error, recipient };
+    return { ...counts, email: emailDryRun() ? "dry_run" : "sent", recipient };
+  } catch (err) {
+    return { ...empty, email: "failed", error: err instanceof Error ? err.message : String(err), recipient };
   }
 }

@@ -12,7 +12,8 @@
     "geo:prepare": "node scripts/prepare-geo.mjs",
     "typecheck": "tsc --noEmit",
     "seed:production": "node --env-file=.env.local scripts/seed-production.mjs",
-    "verify:readonly": "node --env-file=.env.local scripts/verify-readonly.mjs"
+    "verify:readonly": "node --env-file=.env.local scripts/verify-readonly.mjs",
+    "alerts:send": "node --env-file-if-exists=.env.local scripts/send-alerts.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.12",

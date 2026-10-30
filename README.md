@@ -128,8 +128,12 @@ python pipeline/import_quantification.py "C:/path/NSP-BAN quantification_1904202
   understood" with suggestions rather than a guess, and a place name it does not know is never silently
   replaced by a national answer. Rates ranked across areas ignore areas with too few tests/cases (< 100 tests,
   < 20 cases) because such rates are unreliable.
-- **Email alerts:** follow the steps on the Alerts tab (Gmail App Password → `GMAIL_USER`,
-  `GMAIL_APP_PASSWORD`, `ALERT_EMAIL_TO`).
+- **Email alerts (free Gmail):** every reported death (and every surge) found by a sync is emailed to `ALERT_EMAIL_TO`
+  (default shahriarnmp@gmail.com) as one digest. Set `GMAIL_USER` and `GMAIL_APP_PASSWORD` (a Gmail **app password** — needs
+  2-Step Verification; see the Alerts tab) locally and in Vercel, plus `CRON_SECRET` so the daily sync runs. Alerts detected
+  before email was set up, or whose send failed, are retried automatically on the next sync. `npm run alerts:send` emails the
+  current death alerts immediately (`POST /api/alerts/send`, protected by `CRON_SECRET`); `ALERT_EMAIL_DRY_RUN=1` builds the
+  message without sending, to test the wiring.
 - **API and ABER:** come from the imported population workbook (see above).
 
 ## Deploy (live: https://malaria-bd.vercel.app)

@@ -24,6 +24,7 @@ interface Alert {
 interface AlertsResponse {
   alerts: Alert[];
   emailConfigured: boolean;
+  dryRun?: boolean;
   recipient: string;
   preview: { subject: string; html: string; text: string } | null;
 }
@@ -52,14 +53,18 @@ export default function AlertsTab() {
 
   const deaths = data.alerts.filter((a) => a.kind === "death");
   const surges = data.alerts.filter((a) => a.kind === "surge");
+  const waiting = data.alerts.filter((a) => a.status === "email_not_configured" || a.status === "email_failed" || a.status === "new");
+  const waitingDeaths = waiting.filter((a) => a.kind === "death").reduce((sum, a) => sum + a.observed, 0);
+  const failed = data.alerts.find((a) => a.status === "email_failed" && a.email_error);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
       <div className="min-w-0 space-y-4">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Stat label="Death alerts" value={deaths.length} detail={`${deaths.reduce((s, a) => s + a.observed, 0)} deaths`} tone="red" />
           <Stat label="Surge alerts" value={surges.length} detail="cases > usual + 50" tone="amber" />
-          <Stat label="Email delivery" value={data.emailConfigured ? "Active" : "Not set up"} detail={data.recipient} tone={data.emailConfigured ? "green" : "slate"} />
+          <Stat label="Waiting to email" value={waiting.length} detail={waiting.length ? `${waitingDeaths} deaths · sent on the next sync once email is on` : "nothing pending"} tone={waiting.length ? "red" : "green"} />
+          <Stat label="Email delivery" value={data.dryRun ? "Test mode" : data.emailConfigured ? "Active" : "Not set up"} detail={`to ${data.recipient}`} tone={data.emailConfigured && !data.dryRun ? "green" : "slate"} />
         </div>
 
         <PopoutCard
@@ -101,7 +106,7 @@ export default function AlertsTab() {
                         <div className="text-xs text-slate-500">{a.upazila_name ? `${a.district_name} · ` : ""}{a.division_name} · {a.level}</div>
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">{MONTHS[a.report_month - 1]} {a.report_year}</td>
-                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{a.observed.toLocaleString("en-US")}{a.kind === "death" ? " deaths" : " cases"}</td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{a.observed.toLocaleString("en-US")}{a.kind === "death" ? (a.observed === 1 ? " death" : " deaths") : " cases"}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{a.expected === null ? "—" : Math.round(a.expected).toLocaleString("en-US")}</td>
                       <td className="px-3 py-2"><span className={`rounded px-2 py-0.5 text-xs ${status.className}`} title={a.email_error ?? undefined}>{status.text}</span></td>
                     </tr>
@@ -114,14 +119,23 @@ export default function AlertsTab() {
       </div>
 
       <div className="min-w-0 space-y-4">
+        {failed && (
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+            <b>The last email could not be sent:</b> {failed.email_error}. It will be retried automatically on the next sync. (Gmail needs an <b>app password</b>, not your normal password.)
+          </div>
+        )}
+        {data.dryRun && (
+          <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">Test mode (<code>ALERT_EMAIL_DRY_RUN=1</code>): messages are built but not sent. Remove the setting to send for real.</div>
+        )}
         {!data.emailConfigured && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <h3 className="font-semibold">Turn on email alerts (one-time, ~3 minutes)</h3>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed">
-              <li>Sign in to the Gmail account that should <b>send</b> the alerts and turn on 2-Step Verification.</li>
+              <li>Sign in to the Gmail account that should <b>send</b> the alerts (free — e.g. <b>{data.recipient}</b>) and turn on 2-Step Verification.</li>
               <li>Open <b>myaccount.google.com/apppasswords</b>, create an app password named “Malaria MIS”, and copy the 16-letter code.</li>
               <li>Add to <code>.env.local</code> (and to Vercel → Settings → Environment Variables): <code>GMAIL_USER=you@gmail.com</code>, <code>GMAIL_APP_PASSWORD=the16letters</code>, <code>ALERT_EMAIL_TO={data.recipient}</code>.</li>
-              <li>Restart the app. New deaths and surges found by the next sync are emailed as one message.</li>
+              <li>Restart the app (on Vercel: redeploy). Every death or surge found by the next sync — including the ones listed as “Email not set up” above — is emailed as one message. Add <code>CRON_SECRET</code> too, so the daily sync runs.</li>
+              <li>To send the current death alerts immediately: <code>npm run alerts:send</code>.</li>
             </ol>
           </div>
         )}
