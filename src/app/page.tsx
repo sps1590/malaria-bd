@@ -104,7 +104,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   const tab: Tab = TABS.some((t) => t.id === params.tab) ? (params.tab as Tab) : "overview";
   const needsData = DATA_TABS.has(tab);
   const toParam = parseYear(params.to) ?? new Date().getFullYear();
-  const fromParam = parseYear(params.from) ?? (tab === "epi" ? FULL_HISTORY_FROM : toParam - (DEFAULT_SPAN_YEARS - 1));
+  const fromParam = parseYear(params.from) ?? (tab === "epi" || tab === "bi" ? FULL_HISTORY_FROM : toParam - (DEFAULT_SPAN_YEARS - 1));
   const from = Math.min(fromParam, toParam);
   const to = Math.max(fromParam, toParam);
 

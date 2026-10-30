@@ -24,6 +24,15 @@ import type { FeatureCollection } from "geojson";
 import type { LatLngBounds, Map as LeafletMap, Path as LeafletPath } from "leaflet";
 import { DownloadImageButton, Icon, IconButton, Modal, type IconName } from "@/components/ChartTools";
 import { GRID, MODEL_LABEL, SERIES, SURFACE, axisTick, tooltipValue } from "@/lib/chart-theme";
+import { periodLabel, recT } from "@/lib/epi-calc";
+import {
+  CalendarPanel, DemographicsPanel, FindingsPanel, KpiStrip, MoversPanel, ParetoPanel, SignalsPanel, TrendPanel,
+  type KpiItem, type TrendPoint,
+} from "@/components/bi/BiWidgets";
+import {
+  GOOD_WHEN_DOWN, arrow, buildFindings, comparisonRecords, fmtPct, monthRangeLabel, monthlyValues, movers, pareto, pctDelta,
+  selectPeriod, signalRows, type PeriodSel,
+} from "@/components/bi/calc";
 import {
   INDICATORS,
   MONTHS,
@@ -50,7 +59,7 @@ import {
 
 type Leaflet = typeof import("leaflet");
 export type GeoLevel = "division" | "district" | "upazila";
-type WidgetId = "kpis" | "trend" | "forecast" | "map" | "species" | "areas";
+type WidgetId = "kpis" | "map" | "findings" | "signals" | "trend" | "movers" | "areas" | "pareto" | "forecast" | "people" | "calendar" | "species";
 type GeoRecord = MisRecord & { divisionKey: string; districtKey: string; upazilaKey: string };
 interface GeoPick {
   key: string;
@@ -110,22 +119,23 @@ const DEATH_RED = "#c81e1e";
 // others, which copies each item's minW through unchanged — a widget with minW:4 rendered
 // wider than its container at the xxs/xs/sm breakpoints (only 2-6 total columns there), causing
 // horizontal page overflow on tablets and phones. Bumping the key drops any such cached layout.
-const LAYOUT_KEY = "malaria-mis:bi-layouts:v3";
+const LAYOUT_KEY = "malaria-mis:bi-layouts:v4";
 const LEGEND_FMT = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
 const COUNT_FMT = new Intl.NumberFormat("en-US");
 // Rates from fewer tests than this are ranked last in the area table (e.g. 3 tests → TPR 100%).
 const MIN_TESTS_FOR_RANKING = 50;
 
-const WIDGET_ROW_ORDER: WidgetId[] = ["kpis", "trend", "map", "forecast", "areas", "species"];
-const WIDGET_HEIGHT: Record<WidgetId, number> = { kpis: 4, trend: 8, map: 13, forecast: 10, areas: 9, species: 7 };
-const WIDGET_MIN_HEIGHT: Record<WidgetId, number> = { kpis: 3, trend: 6, map: 8, forecast: 8, areas: 5, species: 5 };
+const WIDGET_ROW_ORDER: WidgetId[] = ["kpis", "map", "findings", "signals", "trend", "movers", "areas", "pareto", "forecast", "people", "calendar", "species"];
+const WIDGET_HEIGHT: Record<WidgetId, number> = { kpis: 6, map: 16, findings: 10, signals: 9, trend: 10, movers: 9, areas: 11, pareto: 10, forecast: 10, people: 10, calendar: 9, species: 8 };
+const WIDGET_MIN_HEIGHT: Record<WidgetId, number> = { kpis: 4, map: 10, findings: 5, signals: 5, trend: 6, movers: 5, areas: 5, pareto: 5, forecast: 8, people: 6, calendar: 5, species: 5 };
 
 /** Single full-width column, stacked top to bottom — every widget's minW is capped at this
  * breakpoint's own column count, so it can never render wider than the container. */
 function stackedLayout(cols: number): ResponsiveLayouts["lg"] {
   let y = 0;
   return WIDGET_ROW_ORDER.map((i) => {
-    const h = WIDGET_HEIGHT[i];
+    // the KPI cards wrap into more rows on narrow screens, so they need more height there
+    const h = i === "kpis" ? (cols <= 2 ? 11 : cols <= 4 ? 8 : WIDGET_HEIGHT[i]) : WIDGET_HEIGHT[i];
     const item = { i, x: 0, y, w: cols, h, minW: Math.min(2, cols), minH: WIDGET_MIN_HEIGHT[i] };
     y += h;
     return item;
@@ -134,21 +144,33 @@ function stackedLayout(cols: number): ResponsiveLayouts["lg"] {
 
 const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   lg: [
-    { i: "kpis", x: 0, y: 0, w: 12, h: 4, minH: 3 },
-    { i: "trend", x: 0, y: 4, w: 7, h: 8, minW: 4, minH: 6 },
-    { i: "map", x: 7, y: 4, w: 5, h: 15, minW: 3, minH: 8 },
-    { i: "forecast", x: 0, y: 12, w: 7, h: 11, minW: 4, minH: 8 },
-    { i: "areas", x: 7, y: 19, w: 5, h: 11, minW: 3, minH: 5 },
-    { i: "species", x: 0, y: 23, w: 7, h: 7, minW: 4, minH: 5 },
+    { i: "kpis", x: 0, y: 0, w: 12, h: 5, minH: 4 },
+    { i: "map", x: 0, y: 5, w: 7, h: 18, minW: 4, minH: 10 },
+    { i: "findings", x: 7, y: 5, w: 5, h: 10, minW: 3, minH: 5 },
+    { i: "signals", x: 7, y: 15, w: 5, h: 8, minW: 3, minH: 5 },
+    { i: "trend", x: 0, y: 23, w: 7, h: 10, minW: 4, minH: 6 },
+    { i: "movers", x: 7, y: 23, w: 5, h: 10, minW: 3, minH: 5 },
+    { i: "areas", x: 0, y: 33, w: 7, h: 11, minW: 3, minH: 5 },
+    { i: "pareto", x: 7, y: 33, w: 5, h: 11, minW: 3, minH: 5 },
+    { i: "forecast", x: 0, y: 44, w: 7, h: 11, minW: 4, minH: 8 },
+    { i: "people", x: 7, y: 44, w: 5, h: 11, minW: 3, minH: 6 },
+    { i: "calendar", x: 0, y: 55, w: 7, h: 10, minW: 4, minH: 5 },
+    { i: "species", x: 7, y: 55, w: 5, h: 10, minW: 3, minH: 5 },
   ],
   // md keeps the same side-by-side dashboard shape as lg, rescaled to its 10 columns.
   md: [
-    { i: "kpis", x: 0, y: 0, w: 10, h: 4, minH: 3 },
-    { i: "trend", x: 0, y: 4, w: 6, h: 8, minW: 4, minH: 6 },
-    { i: "map", x: 6, y: 4, w: 4, h: 15, minW: 3, minH: 8 },
-    { i: "forecast", x: 0, y: 12, w: 6, h: 11, minW: 4, minH: 8 },
-    { i: "areas", x: 6, y: 19, w: 4, h: 11, minW: 3, minH: 5 },
-    { i: "species", x: 0, y: 23, w: 6, h: 7, minW: 4, minH: 5 },
+    { i: "kpis", x: 0, y: 0, w: 10, h: 5, minH: 4 },
+    { i: "map", x: 0, y: 5, w: 6, h: 18, minW: 4, minH: 10 },
+    { i: "findings", x: 6, y: 5, w: 4, h: 10, minW: 3, minH: 5 },
+    { i: "signals", x: 6, y: 15, w: 4, h: 8, minW: 3, minH: 5 },
+    { i: "trend", x: 0, y: 23, w: 6, h: 10, minW: 4, minH: 6 },
+    { i: "movers", x: 6, y: 23, w: 4, h: 10, minW: 3, minH: 5 },
+    { i: "areas", x: 0, y: 33, w: 6, h: 11, minW: 3, minH: 5 },
+    { i: "pareto", x: 6, y: 33, w: 4, h: 11, minW: 3, minH: 5 },
+    { i: "forecast", x: 0, y: 44, w: 6, h: 11, minW: 4, minH: 8 },
+    { i: "people", x: 6, y: 44, w: 4, h: 11, minW: 3, minH: 6 },
+    { i: "calendar", x: 0, y: 55, w: 6, h: 10, minW: 4, minH: 5 },
+    { i: "species", x: 6, y: 55, w: 4, h: 10, minW: 3, minH: 5 },
   ],
   // Below ~1000px (tablet portrait and phones), a side-by-side dashboard has no room left for
   // charts to be legible — stack everything full-width instead of shrinking columns further.
@@ -332,6 +354,12 @@ export function ChoroplethMap({
   breaks,
   metric,
   onSelect,
+  fills,
+  tips,
+  outlines,
+  labels,
+  legend,
+  legendTitle,
 }: {
   level: GeoLevel;
   parentKey: string | null;
@@ -340,6 +368,13 @@ export function ChoroplethMap({
   breaks: number[];
   metric: MeasureKey;
   onSelect: (name: string) => void;
+  /** Optional overrides (BI tab): colour, tooltip HTML and label text per area key; outlined = outbreak-signal areas. */
+  fills?: Map<string, string>;
+  tips?: Map<string, string>;
+  outlines?: Set<string>;
+  labels?: Map<string, string>;
+  legend?: { color: string; label: string }[];
+  legendTitle?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -439,15 +474,18 @@ export function ChoroplethMap({
     );
 
     let selectedLayer: LeafletPath | null = null;
+    const labelLayer = L.layerGroup().addTo(map);
     const layer = L.geoJSON({ type: "FeatureCollection", features } as FeatureCollection, {
       style: (feature) => {
         const key = keyOf(nameOf(feature?.properties));
         const selected = selectedKey !== null && key === selectedKey;
+        const flagged = outlines?.has(key) ?? false;
         return {
-          color: selected ? "#0f172a" : "#57534e",
-          weight: selected ? 3 : 0.8,
+          color: selected ? "#0f172a" : flagged ? "#7f1d1d" : "#57534e",
+          weight: selected ? 3 : flagged ? 3 : 0.8,
+          dashArray: flagged && !selected ? "5 3" : undefined,
           fillOpacity: selectedKey !== null && !selected ? 0.55 : 0.88,
-          fillColor: mapColor(stats.get(key)?.value ?? null, breaks, metric),
+          fillColor: fills?.get(key) ?? mapColor(stats.get(key)?.value ?? null, breaks, metric),
         };
       },
       onEachFeature: (feature, lyr) => {
@@ -455,13 +493,21 @@ export function ChoroplethMap({
         const stat = stats.get(keyOf(name));
         if (selectedKey !== null && keyOf(name) === selectedKey) selectedLayer = lyr as LeafletPath;
         lyr.bindTooltip(
-          `<strong>${escapeHtml(name)}</strong><br/>` +
-            `${escapeHtml(measureLabel(metric))}: ${escapeHtml(formatMeasure(metric, stat?.value ?? null))}<br/>` +
-            `Cases: ${escapeHtml(formatMeasure("cases", stat?.totals.cases ?? null))} · ` +
-            `Deaths: ${escapeHtml(formatMeasure("deaths", stat?.totals.deaths ?? null))} · ` +
-            `Tested: ${escapeHtml(formatMeasure("tests", stat?.totals.tests ?? null))}`,
+          tips?.get(keyOf(name)) ??
+            `<strong>${escapeHtml(name)}</strong><br/>` +
+              `${escapeHtml(measureLabel(metric))}: ${escapeHtml(formatMeasure(metric, stat?.value ?? null))}<br/>` +
+              `Cases: ${escapeHtml(formatMeasure("cases", stat?.totals.cases ?? null))} · ` +
+              `Deaths: ${escapeHtml(formatMeasure("deaths", stat?.totals.deaths ?? null))} · ` +
+              `Tested: ${escapeHtml(formatMeasure("tests", stat?.totals.tests ?? null))}`,
           { sticky: true },
         );
+        const labelText = labels?.get(keyOf(name));
+        if (labelText) {
+          const center = (lyr as LeafletPath & { getBounds?: () => LatLngBounds }).getBounds?.().getCenter();
+          if (center) {
+            L.marker(center, { interactive: false, keyboard: false, icon: L.divIcon({ className: "bi-map-label", html: `<span>${escapeHtml(labelText)}</span>`, iconSize: [0, 0] }) }).addTo(labelLayer);
+          }
+        }
         lyr.on({
           click: () => onSelectRef.current(name),
           mouseover: (e) => (e.target as LeafletPath).setStyle({ weight: 2.5, color: "#0f172a" }),
@@ -481,13 +527,26 @@ export function ChoroplethMap({
     }
     return () => {
       layer.remove();
+      labelLayer.remove();
     };
-  }, [ready, geo, level, parentKey, selectedKey, stats, breaks, metric]);
+  }, [ready, geo, level, parentKey, selectedKey, stats, breaks, metric, fills, tips, outlines, labels]);
 
   return (
     <div className="relative isolate h-full w-full overflow-hidden rounded-md">
       <div ref={containerRef} className="h-full w-full bg-slate-50" />
-      <MapLegend breaks={breaks} metric={metric} level={level} />
+      {legend ? (
+        <div className="pointer-events-none absolute bottom-2 left-2 z-[1000] rounded bg-white/90 p-2 text-[11px] shadow">
+          <div className="mb-1 font-semibold text-slate-700">{legendTitle ?? measureLabel(metric)}</div>
+          {[...legend, { color: NO_DATA, label: "No data" }].map((item, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-4 rounded-sm border border-slate-300" style={{ background: item.color }} />
+              {item.label}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <MapLegend breaks={breaks} metric={metric} level={level} />
+      )}
       {error && (
         <div className="absolute inset-x-2 top-2 z-[1000] rounded bg-amber-50 p-2 text-xs text-amber-800 shadow">
           Map boundaries unavailable ({error}). Run <code>npm run geo:prepare</code>.
@@ -632,6 +691,51 @@ function ForecastPanel({
 
 /* ------------------------------- Component ------------------------------- */
 
+type MapMode = "value" | "change";
+
+/** Diverging classes for "change vs the same months last year": blue = fell, red = rose. */
+const CHANGE_CLASSES = [
+  { color: "#7f1d1d", label: "New (none before)" },
+  { color: "#d03b3b", label: "Rose > 50%" },
+  { color: "#ee8a77", label: "Rose 20 – 50%" },
+  { color: "#f8c6b8", label: "Rose 5 – 20%" },
+  { color: "#d6cfb8", label: "Little change (±5%)" },
+  { color: "#bcd4f0", label: "Fell 5 – 20%" },
+  { color: "#7fb0e6", label: "Fell 20 – 50%" },
+  { color: "#2a78d6", label: "Fell > 50%" },
+  { color: "#b9b9b6", label: "None in either period" },
+] as const;
+
+function changeColor(cur: number | null, prev: number | null, rate: boolean): string | undefined {
+  if (cur === null || prev === null) return undefined;
+  if (!rate && cur === 0 && prev === 0) return CHANGE_CLASSES[8].color;
+  if (!rate && prev === 0) return cur > 0 ? CHANGE_CLASSES[0].color : undefined;
+  const p = pctDelta(cur, prev);
+  if (p === null) return undefined;
+  if (p === Infinity) return CHANGE_CLASSES[0].color;
+  if (p > 50) return CHANGE_CLASSES[1].color;
+  if (p > 20) return CHANGE_CLASSES[2].color;
+  if (p > 5) return CHANGE_CLASSES[3].color;
+  if (p >= -5) return CHANGE_CLASSES[4].color;
+  if (p >= -20) return CHANGE_CLASSES[5].color;
+  if (p >= -50) return CHANGE_CLASSES[6].color;
+  return CHANGE_CLASSES[7].color;
+}
+
+const csvCell = (v: string | number | null) => {
+  const s = v === null ? "" : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+function downloadText(filename: string, text: string) {
+  const url = URL.createObjectURL(new Blob([`﻿${text}`], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.replace(/[^\w.-]+/g, "-").toLowerCase();
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function BiTab({ dataset }: { dataset: MisDataset }) {
   const records = useMemo<GeoRecord[]>(
     () =>
@@ -644,16 +748,25 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
     [dataset],
   );
   const years = useMemo(() => [...new Set(records.map((r) => r.year))].sort((a, b) => a - b), [records]);
+  /** Newest reported month in the loaded data (the "now" for signals). */
+  const latestT = useMemo(() => records.reduce((p, r) => Math.max(p, recT(r)), 0), [records]);
 
   const [geo, setGeo] = useState<GeoSelection>({ division: null, district: null, upazila: null });
   const [year, setYear] = useState<number | "all">(() => years.at(-1) ?? "all");
+  const [monthFrom, setMonthFrom] = useState(1);
+  const [monthTo, setMonthTo] = useState(12);
   const [metric, setMetric] = useState<MeasureKey>("cases");
+  const [mapMode, setMapMode] = useState<MapMode>("value");
+  const [showLabels, setShowLabels] = useState(false);
+  const [showSignals, setShowSignals] = useState(true);
+  const [search, setSearch] = useState("");
   const [layouts, setLayouts] = useState<ResponsiveLayouts>(readStoredLayouts);
   const [expanded, setExpanded] = useState<WidgetId | null>(null);
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const { width, containerRef, mounted } = useContainerWidth();
 
   const level: GeoLevel = geo.district ? "upazila" : geo.division ? "district" : "division";
+  const sel = useMemo<PeriodSel>(() => ({ year, monthFrom, monthTo }), [year, monthFrom, monthTo]);
 
   // Area records for the map (all children of the drilled parent) and for the analyses (incl. a chosen upazila).
   const areaRecords = useMemo(
@@ -664,25 +777,37 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
     () => (geo.upazila ? areaRecords.filter((r) => r.upazilaKey === geo.upazila?.key) : areaRecords),
     [areaRecords, geo.upazila],
   );
-  const scoped = useMemo(() => (year === "all" ? geoScoped : geoScoped.filter((r) => r.year === year)), [geoScoped, year]);
-  const mapScoped = useMemo(() => (year === "all" ? areaRecords : areaRecords.filter((r) => r.year === year)), [areaRecords, year]);
+  const scoped = useMemo(() => selectPeriod(geoScoped, sel), [geoScoped, sel]);
+  const mapScoped = useMemo(() => selectPeriod(areaRecords, sel), [areaRecords, sel]);
   const totals = useMemo(() => totalsOf(scoped), [scoped]);
 
-  const areaStats = useMemo(() => {
-    const stats = new Map<string, AreaStat>();
-    for (const r of mapScoped) {
-      const key = level === "division" ? r.divisionKey : level === "district" ? r.districtKey : r.upazilaKey;
-      let s = stats.get(key);
-      if (!s) {
-        const label = level === "division" ? r.divisionName : level === "district" ? r.districtName : r.upazilaName;
-        s = { key, label, totals: emptyTotals(), value: null };
-        stats.set(key, s);
+  // Comparison: the same months of the previous year (only months the selected year has).
+  const cmp = useMemo(() => comparisonRecords(geoScoped, scoped, sel), [geoScoped, scoped, sel]);
+  const mapCmp = useMemo(() => comparisonRecords(areaRecords, mapScoped, sel), [areaRecords, mapScoped, sel]);
+  const prevTotals = useMemo(() => (cmp ? totalsOf(cmp.rows) : null), [cmp]);
+  const prevLabel = cmp?.label ?? null;
+  const effectiveMode: MapMode = mapMode === "change" && mapCmp ? "change" : "value";
+
+  const statsOf = useCallback(
+    (rows: readonly GeoRecord[]) => {
+      const stats = new Map<string, AreaStat>();
+      for (const r of rows) {
+        const key = level === "division" ? r.divisionKey : level === "district" ? r.districtKey : r.upazilaKey;
+        let s = stats.get(key);
+        if (!s) {
+          const label = level === "division" ? r.divisionName : level === "district" ? r.districtName : r.upazilaName;
+          s = { key, label, totals: emptyTotals(), value: null };
+          stats.set(key, s);
+        }
+        addRecord(s.totals, r);
       }
-      addRecord(s.totals, r);
-    }
-    for (const s of stats.values()) s.value = measureValue(s.totals, metric);
-    return stats;
-  }, [mapScoped, level, metric]);
+      for (const s of stats.values()) s.value = measureValue(s.totals, metric);
+      return stats;
+    },
+    [level, metric],
+  );
+  const areaStats = useMemo(() => statsOf(mapScoped), [statsOf, mapScoped]);
+  const prevAreaStats = useMemo(() => (mapCmp ? statsOf(mapCmp.rows) : new Map<string, AreaStat>()), [statsOf, mapCmp]);
 
   const breaks = useMemo(
     () =>
@@ -711,19 +836,44 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
     return { divisions: [...divisions.values()].sort(byLabel), districts: flatten(districts), upazilas: flatten(upazilas) };
   }, [records]);
 
-  // Every analysis follows the geography, the year and the selected metric.
-  const trend = useMemo(
-    () =>
-      [...groupTotals(scoped, (r) => r.year * 100 + r.month)]
-        .sort((a, b) => a[0] - b[0])
-        .map(([p, t]) => ({
-          period: `${Math.floor(p / 100)}-${String(p % 100).padStart(2, "0")}`,
-          value: round2(measureValue(t, metric)),
-          tests: t.tests,
-          tpr: round2(testPositivityRate(t.cases, t.tests)),
-        })),
-    [scoped, metric],
-  );
+  /* ---------------- trend, KPIs, species, tables ---------------- */
+
+  const monthlyAll = useMemo(() => monthlyValues(geoScoped, metric), [geoScoped, metric]);
+  const trend = useMemo<TrendPoint[]>(() => {
+    const byT = groupTotals(scoped, recT);
+    const ts = [...byT.keys()].sort((a, b) => a - b);
+    const values: (number | null)[] = ts.map((t) => monthlyAll.get(t) ?? null);
+    return ts.map((t, i) => {
+      const window = values.slice(Math.max(0, i - 2), i + 1).filter((v): v is number => v !== null);
+      const tot = byT.get(t)!;
+      return {
+        period: `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`,
+        value: round2(values[i]),
+        prior: round2(monthlyAll.get(t - 12) ?? null),
+        avg: window.length === 3 ? round2(window.reduce((s, v) => s + v, 0) / 3) : null,
+        tests: tot.tests,
+        tpr: round2(testPositivityRate(tot.cases, tot.tests)),
+      };
+    });
+  }, [scoped, monthlyAll]);
+
+  const kpiItems = useMemo<KpiItem[]>(() => {
+    const byT = groupTotals(scoped, recT);
+    const ts = [...byT.keys()].sort((a, b) => a - b);
+    return KPI_METRICS.map(({ key, icon }) => {
+      const value = measureValue(totals, key);
+      const prev = prevTotals ? measureValue(prevTotals, key) : null;
+      return {
+        key,
+        icon,
+        value: formatMeasure(key, value),
+        delta: prevTotals ? pctDelta(value, prev) : null,
+        spark: ts.map((t) => measureValue(byT.get(t)!, key)).filter((v): v is number => v !== null),
+        prevText: prev !== null && prevLabel ? `was ${formatMeasure(key, prev)}` : null,
+        tip: `${isIndicator(key) ? `${INDICATORS[key].formula}. ` : ""}${prevLabel ? `Change is against the same months of ${prevLabel}. ` : ""}Click to show ${measureLabel(key)} on the map, trend and ranking`,
+      };
+    });
+  }, [scoped, totals, prevTotals, prevLabel]);
 
   // All years → one bar per year; a single year → one bar per month of that year.
   const species = useMemo(
@@ -739,18 +889,135 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
   );
 
   // Highest to lowest (reliable rates first).
-  const topAreas = useMemo(
+  const rankedAreas = useMemo(
     () =>
-      [...areaStats.values()]
-        .sort(
-          (a, b) =>
-            Number(isReliable(b, metric)) - Number(isReliable(a, metric)) ||
-            (b.value ?? -Infinity) - (a.value ?? -Infinity) ||
-            b.totals.cases - a.totals.cases,
-        )
-        .slice(0, 25),
+      [...areaStats.values()].sort(
+        (a, b) =>
+          Number(isReliable(b, metric)) - Number(isReliable(a, metric)) ||
+          (b.value ?? -Infinity) - (a.value ?? -Infinity) ||
+          b.totals.cases - a.totals.cases,
+      ),
     [areaStats, metric],
   );
+  const topAreas = useMemo(() => rankedAreas.slice(0, 25), [rankedAreas]);
+
+  const moved = useMemo(() => movers(areaStats, prevAreaStats, metric), [areaStats, prevAreaStats, metric]);
+
+  // Burden concentration at the finest level (every reporting upazila in the drilled area).
+  const paretoData = useMemo(() => {
+    const byUpazila = new Map<string, { label: string; cases: number }>();
+    for (const r of mapScoped) {
+      const key = `${r.districtKey}|${r.upazilaKey}`;
+      const acc = byUpazila.get(key);
+      if (acc) acc.cases += r.cases;
+      else byUpazila.set(key, { label: r.upazilaName, cases: r.cases });
+    }
+    return pareto([...byUpazila].map(([key, a]) => ({ key, label: a.label, cases: a.cases })));
+  }, [mapScoped]);
+
+  // Outbreak signals: newest month vs each area's own history (district rows above upazila level, upazila rows inside a district).
+  const signalLevel = geo.district ? "upazila" : "district";
+  const sig = useMemo(
+    () => signalRows(areaRecords, signalLevel, latestT, (row) => (signalLevel === "upazila" ? upazilaMatchKey(row.name) : canonicalGeoName(row.name))),
+    [areaRecords, signalLevel, latestT],
+  );
+  const outlines = useMemo(() => (showSignals && level !== "division" ? new Set(sig.signals.map((s) => s.mapKey)) : undefined), [showSignals, level, sig]);
+
+  // Calendar: every loaded year × month of the selected measure.
+  const calendar = useMemo(() => {
+    const grid = new Map<number, (number | null)[]>();
+    for (const [t, v] of monthlyAll) {
+      const y = Math.floor(t / 12);
+      const row = grid.get(y) ?? Array<number | null>(12).fill(null);
+      row[t % 12] = v;
+      grid.set(y, row);
+    }
+    return [...grid].sort((a, b) => a[0] - b[0]);
+  }, [monthlyAll]);
+
+  /* ---------------- map colours, tooltips, labels ---------------- */
+
+  const levelWord = level === "upazila" ? "upazilas" : level === "district" ? "districts" : "divisions";
+  const isRate = isIndicator(metric);
+  const mapFills = useMemo(() => {
+    if (effectiveMode !== "change") return undefined;
+    const m = new Map<string, string>();
+    for (const [key, s] of areaStats) {
+      const p = prevAreaStats.get(key);
+      if (isRate && ((s.totals.tests ?? 0) < MIN_TESTS_FOR_RANKING || (p?.totals.tests ?? 0) < MIN_TESTS_FOR_RANKING)) continue;
+      const c = changeColor(s.value, p ? p.value : isRate ? null : 0, isRate);
+      if (c) m.set(key, c);
+    }
+    return m;
+  }, [effectiveMode, areaStats, prevAreaStats, isRate]);
+
+  const mapTips = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [key, s] of areaStats) {
+      const p = prevAreaStats.get(key);
+      const delta = mapCmp ? pctDelta(s.value, p ? p.value : isRate ? null : 0) : null;
+      const tpr = measureValue(s.totals, "tpr");
+      const flagged = outlines?.has(key);
+      m.set(
+        key,
+        `<strong>${escapeHtml(s.label)}</strong>${flagged ? ' <span style="color:#b91c1c">● above usual range</span>' : ""}<br/>` +
+          `${escapeHtml(measureLabel(metric))}: <b>${escapeHtml(formatMeasure(metric, s.value))}</b>` +
+          (mapCmp && delta !== null ? ` (${escapeHtml(arrow(delta))} ${escapeHtml(fmtPct(delta))} vs ${escapeHtml(mapCmp.label)}${p ? `: ${escapeHtml(formatMeasure(metric, p.value))}` : ""})` : "") +
+          `<br/>Cases ${escapeHtml(formatMeasure("cases", s.totals.cases))} · Deaths ${escapeHtml(formatMeasure("deaths", s.totals.deaths))} · Tested ${escapeHtml(formatMeasure("tests", s.totals.tests))}` +
+          (tpr !== null ? ` · TPR ${escapeHtml(formatMeasure("tpr", tpr))}%` : ""),
+      );
+    }
+    return m;
+  }, [areaStats, prevAreaStats, mapCmp, metric, isRate, outlines]);
+
+  const mapLabels = useMemo(() => {
+    if (!showLabels) return undefined;
+    const take = level === "division" ? 8 : 14;
+    return new Map(rankedAreas.filter((s) => (s.value ?? 0) > 0 || level === "division").slice(0, take).map((s) => [s.key, s.label] as const));
+  }, [showLabels, rankedAreas, level]);
+
+  /* ---------------- findings ---------------- */
+
+  const scopeLabel = geo.upazila?.label ?? geo.district?.label ?? geo.division?.label ?? "Bangladesh";
+  const monthsText = monthRangeLabel(sel);
+  const yearLabel = year === "all" ? "all loaded years" : String(year);
+  const periodText = `${year === "all" ? "all loaded years" : String(year)}${monthsText ? ` (${monthsText})` : ""}`;
+
+  const findings = useMemo(() => {
+    const byT = groupTotals(scoped, recT);
+    const months = [...byT].sort((a, b) => a[0] - b[0]).map(([t, tot]) => ({ label: periodLabel(t), cases: tot.cases }));
+    const expectedMonths = monthTo - monthFrom + 1;
+    const present = new Set(scoped.map((r) => r.month)).size;
+    const partialNote =
+      year !== "all" && present > 0 && present < expectedMonths
+        ? `${year} has data for ${present} of ${expectedMonths} months so far, so the comparison uses the same ${present} months of ${year - 1}, not the full year.`
+        : null;
+    return buildFindings({
+      scope: scopeLabel,
+      period: periodText,
+      levelWord,
+      cur: totals,
+      prev: prevTotals,
+      prevLabel,
+      partialNote,
+      areas: [...areaStats.values()],
+      pareto: paretoData,
+      risers: movers(
+        new Map([...areaStats].map(([k, s]) => [k, { ...s, value: s.totals.cases }])),
+        new Map([...prevAreaStats].map(([k, s]) => [k, { ...s, value: s.totals.cases }])),
+        "cases",
+      ).rises,
+      fallers: movers(
+        new Map([...areaStats].map(([k, s]) => [k, { ...s, value: s.totals.cases }])),
+        new Map([...prevAreaStats].map(([k, s]) => [k, { ...s, value: s.totals.cases }])),
+        "cases",
+      ).falls,
+      months,
+      signals: sig.checked ? { count: sig.signals.length, names: sig.signals.map((s) => s.name), latestLabel: periodLabel(latestT), checked: sig.checked } : null,
+    });
+  }, [scoped, totals, prevTotals, prevLabel, areaStats, prevAreaStats, paretoData, sig, latestT, scopeLabel, periodText, levelWord, monthFrom, monthTo, year]);
+
+  /* ---------------- actions ---------------- */
 
   const drill = useCallback((name: string) => {
     setGeo((g) => {
@@ -779,14 +1046,35 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
     }
   };
 
+  const exportAreas = () => {
+    const head = ["Area", "Confirmed cases", "Deaths", "Persons tested", "TPR %", measureLabel(metric), prevLabel ? `${measureLabel(metric)} ${prevLabel}` : "", prevLabel ? "Change %" : ""].filter(Boolean);
+    const lines = rankedAreas.map((s) => {
+      const p = prevAreaStats.get(s.key);
+      const d = prevLabel ? pctDelta(s.value, p ? p.value : null) : null;
+      return [
+        s.label, s.totals.cases, s.totals.deaths, s.totals.tests, round2(measureValue(s.totals, "tpr")), round2(s.value),
+        ...(prevLabel ? [round2(p?.value ?? null), d === null ? null : d === Infinity ? "new" : round2(d)] : []),
+      ].map((v) => csvCell(v as string | number | null)).join(",");
+    });
+    downloadText(`${GEO_LEVELS[level].label}-${scopeLabel}-${yearLabel}.csv`, [head.map(csvCell).join(","), ...lines].join("\n"));
+  };
+
   const closeModal = useCallback(() => setExpanded(null), []);
-  const scopeLabel = geo.upazila?.label ?? geo.district?.label ?? geo.division?.label ?? "Bangladesh";
   const forecastArea = geo.district
     ? { level: "district", key: geo.district.key, label: geo.district.label }
     : geo.division
       ? { level: "division", key: geo.division.key, label: geo.division.label }
       : { level: "national", key: "bangladesh", label: "Bangladesh" };
-  const yearLabel = year === "all" ? "all loaded years" : String(year);
+
+  const searchOptions = useMemo(() => [...areaStats.values()].map((s) => s.label).sort(), [areaStats]);
+  const onSearch = (value: string) => {
+    setSearch(value);
+    const hit = searchOptions.find((l) => l.toLowerCase() === value.trim().toLowerCase());
+    if (hit) {
+      drill(hit);
+      setSearch("");
+    }
+  };
 
   const filters = (
     <>
@@ -798,79 +1086,156 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
           {years.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </label>
+      <label className="flex items-center gap-1 text-xs text-slate-600" data-no-export="true" title="Narrow to a season — e.g. Jun–Aug is the usual malaria peak">
+        Months
+        <select aria-label="From month" value={monthFrom} onChange={(e) => { const v = Number(e.target.value); setMonthFrom(v); if (v > monthTo) setMonthTo(v); }} className="rounded border border-slate-300 px-1 py-1 text-xs">
+          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m.slice(0, 3)}</option>)}
+        </select>
+        –
+        <select aria-label="To month" value={monthTo} onChange={(e) => { const v = Number(e.target.value); setMonthTo(v); if (v < monthFrom) setMonthFrom(v); }} className="rounded border border-slate-300 px-1 py-1 text-xs">
+          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m.slice(0, 3)}</option>)}
+        </select>
+        {!(monthFrom === 1 && monthTo === 12) && (
+          <button type="button" onClick={() => { setMonthFrom(1); setMonthTo(12); }} className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] hover:bg-slate-50">All</button>
+        )}
+      </label>
     </>
   );
 
+  const ctl = "rounded border px-2 py-1 text-[11px] font-medium shadow-sm";
+  const mapSummary = (() => {
+    const all = [...areaStats.values()];
+    const withCases = all.filter((s) => s.totals.cases > 0);
+    const top3 = [...withCases].sort((a, b) => b.totals.cases - a.totals.cases).slice(0, 3);
+    const caseTotal = mapScoped.reduce((s, r) => s + r.cases, 0);
+    const topShare = caseTotal ? (top3.reduce((s, a) => s + a.totals.cases, 0) / caseTotal) * 100 : 0;
+    return `${withCases.length} of ${all.length} ${levelWord} reported cases${top3.length >= 2 && caseTotal ? ` · top ${top3.length} (${top3.map((a) => a.label).join(", ")}) hold ${Math.round(topShare)}%` : ""}${outlines ? ` · ${sig.signals.length} outlined above usual range` : ""}`;
+  })();
+
   const widgets: Record<WidgetId, { title: string; clickToExpand: boolean; body: (big: boolean) => ReactNode }> = {
     kpis: {
-      title: `Key indicators — ${scopeLabel}, ${yearLabel}`,
+      title: `Key indicators — ${scopeLabel}, ${periodText}${prevLabel ? ` · change vs ${prevLabel}` : ""}`,
       clickToExpand: true,
-      body: (big) => (
-        <div className={`grid h-full content-start gap-2 overflow-auto ${big ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2 sm:grid-cols-4 xl:grid-cols-7"}`}>
-          {KPI_METRICS.map(({ key, icon }) => {
-            const death = key === "deaths";
-            return (
-              <button
-                type="button"
-                key={key}
-                title={`${isIndicator(key) ? `${INDICATORS[key].formula}. ` : ""}Click to show ${measureLabel(key)} on the map, trend and ranking`}
-                aria-pressed={key === metric}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMetric(key);
-                }}
-                className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition hover:shadow ${death ? "border-red-200 bg-red-50" : isIndicator(key) ? "border-emerald-100 bg-emerald-50" : "border-slate-100 bg-slate-50"} ${key === metric ? "ring-2 ring-indigo-500" : ""}`}
-              >
-                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${death ? "bg-red-100 text-red-700" : "bg-white text-slate-600"}`}>
-                  <Icon name={icon} className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <div className={`truncate text-[11px] font-medium uppercase tracking-wide ${death ? "text-red-700" : "text-slate-500"}`}>{measureLabel(key)}</div>
-                  <div className={`${big ? "text-3xl" : "text-xl"} font-bold ${death ? "text-red-700" : "text-slate-900"}`}>{formatMeasure(key, measureValue(totals, key))}</div>
-                </div>
-              </button>
-            );
-          })}
+      body: (big) => <KpiStrip items={kpiItems} active={metric} onPick={setMetric} big={big} />,
+    },
+    map: {
+      title: `GIS — ${GEO_LEVELS[level].label} of ${geo.district?.label ?? geo.division?.label ?? "Bangladesh"}, ${periodText}`,
+      clickToExpand: false,
+      body: () => (
+        <div className="flex h-full flex-col gap-1.5">
+          <div className="relative min-h-0 flex-1">
+            <ChoroplethMap
+              level={level}
+              parentKey={geo.district?.key ?? geo.division?.key ?? null}
+              selectedKey={geo.upazila?.key ?? null}
+              stats={areaStats}
+              breaks={breaks}
+              metric={metric}
+              onSelect={drill}
+              fills={mapFills}
+              tips={mapTips}
+              outlines={outlines}
+              labels={mapLabels}
+              legend={effectiveMode === "change" ? CHANGE_CLASSES.map((c) => ({ color: c.color, label: c.label })) : undefined}
+              legendTitle={effectiveMode === "change" ? `${measureLabel(metric)}: change vs ${mapCmp?.label}` : undefined}
+            />
+            <div data-no-export="true" className="widget-no-drag absolute right-2 top-2 z-[1000] flex flex-col items-end gap-1.5">
+              <div className="flex overflow-hidden rounded border border-slate-300 bg-white text-[11px] font-medium shadow-sm" role="group" aria-label="Map shows">
+                <button type="button" onClick={() => setMapMode("value")} className={`px-2 py-1 ${effectiveMode === "value" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>Value</button>
+                <button type="button" disabled={!mapCmp} title={mapCmp ? `Change vs the same months of ${mapCmp.label}` : "Pick a single year with an earlier year in the data"} onClick={() => setMapMode("change")} className={`px-2 py-1 disabled:cursor-not-allowed disabled:opacity-40 ${effectiveMode === "change" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>Change vs last year</button>
+              </div>
+              <div className="flex gap-1.5">
+                <button type="button" aria-pressed={showLabels} onClick={() => setShowLabels((v) => !v)} className={`${ctl} ${showLabels ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>Labels</button>
+                <button type="button" aria-pressed={showSignals} disabled={level === "division"} title={level === "division" ? "Drill into a division to outline areas above their usual range" : "Outline areas above their usual range this month"} onClick={() => setShowSignals((v) => !v)} className={`${ctl} disabled:cursor-not-allowed disabled:opacity-40 ${showSignals && level !== "division" ? "border-rose-700 bg-rose-700 text-white" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>Signals</button>
+              </div>
+              <input
+                list="bi-area-list"
+                value={search}
+                onChange={(e) => onSearch(e.target.value)}
+                placeholder={`Find ${level}…`}
+                aria-label={`Find a ${level}`}
+                className="w-36 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] shadow-sm"
+              />
+              <datalist id="bi-area-list">{searchOptions.map((l) => <option key={l} value={l} />)}</datalist>
+            </div>
+          </div>
+          <p className="text-[11px] leading-snug text-slate-500">{mapSummary}. Click an area to drill down.</p>
         </div>
       ),
     },
-    trend: {
-      title: `Monthly ${measureLabel(metric)} and ${metric === "tpr" ? "people tested" : "test positivity"} — ${scopeLabel}, ${yearLabel}`,
+    findings: {
+      title: `Key findings — ${scopeLabel}, ${periodText}`,
       clickToExpand: true,
+      body: () => <FindingsPanel findings={findings} />,
+    },
+    signals: {
+      title: `Outbreak signals — ${signalLevel === "upazila" ? "upazilas" : "districts"}${geo.division ? ` of ${geo.district?.label ?? geo.division.label}` : ""}, ${periodLabel(latestT)}`,
+      clickToExpand: true,
+      body: () => <SignalsPanel signals={sig.signals} watch={sig.watch} latestLabel={periodLabel(latestT)} levelWord={signalLevel === "upazila" ? "upazilas" : "districts"} onPick={(n) => (signalLevel === "district" && !geo.division ? drillToDistrict(n) : drill(n))} />,
+    },
+    trend: {
+      title: `Monthly ${measureLabel(metric)} with last-year comparison — ${scopeLabel}, ${periodText}`,
+      clickToExpand: true,
+      body: () => <TrendPanel data={trend} metric={metric} />,
+    },
+    movers: {
+      title: `Biggest movers — ${GEO_LEVELS[level].label.toLowerCase()} by ${measureLabel(metric)}${prevLabel ? ` vs ${prevLabel}` : ""}`,
+      clickToExpand: true,
+      body: () => <MoversPanel rises={moved.rises} falls={moved.falls} metric={metric} prevLabel={prevLabel} onPick={drill} />,
+    },
+    areas: {
+      title: `${GEO_LEVELS[level].label} ranked by ${measureLabel(metric)} — ${periodText}`,
+      clickToExpand: false,
       body: () => (
-        // Two aligned panels instead of a dual-axis chart.
-        <div className="flex h-full flex-col gap-1">
-          <div className="min-h-0 flex-[3]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={trend} syncId="bi-trend" margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid vertical={false} stroke={GRID} />
-                <XAxis dataKey="period" tick={axisTick} minTickGap={24} hide />
-                <YAxis tick={axisTick} width={48} />
-                <Tooltip formatter={tooltipValue} />
-                <Bar dataKey="value" name={measureLabel(metric)} fill={metric === "deaths" ? DEATH_RED : SERIES[0]} radius={[2, 2, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
+        <div className="flex h-full flex-col">
+          <div className="mb-1 flex justify-end" data-no-export="true">
+            <button type="button" onClick={exportAreas} className="widget-no-drag rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50">Download all {rankedAreas.length} as CSV</button>
           </div>
-          <div className="min-h-0 flex-[2]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trend} syncId="bi-trend" margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid vertical={false} stroke={GRID} />
-                <XAxis dataKey="period" tick={axisTick} minTickGap={24} />
-                <YAxis tick={axisTick} width={48} unit={metric === "tpr" ? undefined : "%"} />
-                <Tooltip formatter={tooltipValue} />
-                <Line
-                  dataKey={metric === "tpr" ? "tests" : "tpr"}
-                  name={metric === "tpr" ? "People tested" : "Test positivity %"}
-                  stroke={SERIES[1]}
-                  dot={false}
-                  strokeWidth={2}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-white text-left text-xs text-slate-500">
+                <tr>
+                  <th className="py-1 pr-2 font-medium">Area (click to go deeper)</th>
+                  <th className="py-1 pr-2 text-right font-medium">Cases</th>
+                  <th className="py-1 pr-2 text-right font-medium text-red-700">Deaths</th>
+                  <th className="py-1 pr-2 text-right font-medium">TPR %</th>
+                  <th className="py-1 pr-2 text-right font-medium">{isIndicator(metric) ? INDICATORS[metric].label : measureLabel(metric)}</th>
+                  {prevLabel && <th className="py-1 text-right font-medium">vs {prevLabel}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {topAreas.map((s) => {
+                  const selected = level === "upazila" && geo.upazila?.key === s.key;
+                  const p = prevAreaStats.get(s.key);
+                  const d = prevLabel ? pctDelta(s.value, p ? p.value : isRate ? null : 0) : null;
+                  const good = GOOD_WHEN_DOWN[metric] ?? null;
+                  const cls = d === null || good === null || (d !== Infinity && Math.abs(d) < 0.5) ? "text-slate-500" : (d > 0) === good ? "text-rose-700" : "text-emerald-700";
+                  return (
+                    <tr key={s.key} onClick={() => drill(s.label)} className={`cursor-pointer border-t border-slate-100 hover:bg-sky-50 ${selected ? "bg-indigo-50" : ""}`}>
+                      <td className="truncate py-1 pr-2">
+                        <span className="inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: mapFills?.get(s.key) ?? mapColor(s.value, breaks, metric) }} />{" "}
+                        {s.label}
+                        {outlines?.has(s.key) && <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] font-semibold text-rose-800" title="Above its usual range this month">signal</span>}
+                        {!isReliable(s, metric) && <span className="ml-1 text-[10px] text-amber-700" title={`Fewer than ${MIN_TESTS_FOR_RANKING} tests`}>low tests</span>}
+                      </td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{formatMeasure("cases", s.totals.cases)}</td>
+                      <td className={`py-1 pr-2 text-right tabular-nums ${s.totals.deaths ? "font-semibold text-red-700" : "text-slate-400"}`}>{formatMeasure("deaths", s.totals.deaths)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{formatMeasure("tpr", measureValue(s.totals, "tpr"))}</td>
+                      <td className="py-1 pr-2 text-right font-semibold tabular-nums">{formatMeasure(metric, s.value)}</td>
+                      {prevLabel && <td className={`py-1 text-right text-xs tabular-nums ${cls}`}>{d === null ? "—" : `${arrow(d)} ${fmtPct(d)}`}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       ),
+    },
+    pareto: {
+      title: `Where the burden sits — confirmed cases by reporting upazila, ${periodText}`,
+      clickToExpand: true,
+      body: () => <ParetoPanel rows={paretoData.rows} n80={paretoData.n80} total={paretoData.total} gini={paretoData.gini} count={paretoData.count} label="reporting upazilas" />,
     },
     forecast: {
       title: `Cases, deaths & tests with 18-month forecast — ${scopeLabel}, ${yearLabel}`,
@@ -879,20 +1244,15 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
         <ForecastPanel area={forecastArea} records={geoScoped} year={year} latestYear={years.at(-1) ?? null} upazila={geo.upazila?.label ?? null} />
       ),
     },
-    map: {
-      title: `GIS — ${GEO_LEVELS[level].label} of ${geo.district?.label ?? geo.division?.label ?? "Bangladesh"}, ${yearLabel}`,
-      clickToExpand: false,
-      body: () => (
-        <ChoroplethMap
-          level={level}
-          parentKey={geo.district?.key ?? geo.division?.key ?? null}
-          selectedKey={geo.upazila?.key ?? null}
-          stats={areaStats}
-          breaks={breaks}
-          metric={metric}
-          onSelect={drill}
-        />
-      ),
+    people: {
+      title: `Who is affected — age & sex, ${scopeLabel}, ${periodText}`,
+      clickToExpand: true,
+      body: () => <DemographicsPanel cur={totals} prev={prevTotals} prevLabel={prevLabel} />,
+    },
+    calendar: {
+      title: `Seasonality calendar — ${measureLabel(metric)} by month, ${scopeLabel}`,
+      clickToExpand: true,
+      body: () => <CalendarPanel grid={calendar} metric={metric} year={year} monthFrom={monthFrom} monthTo={monthTo} />,
     },
     species: {
       title: `Species composition of cases by ${year === "all" ? "year" : "month"} — ${scopeLabel}, ${yearLabel}`,
@@ -912,44 +1272,20 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
         </ResponsiveContainer>
       ),
     },
-    areas: {
-      title: `${GEO_LEVELS[level].label} ranked by ${measureLabel(metric)} — ${yearLabel}`,
-      clickToExpand: false,
-      body: () => (
-        <div className="h-full overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-white text-left text-xs text-slate-500">
-              <tr>
-                <th className="py-1 pr-2 font-medium">Area (click to go deeper)</th>
-                <th className="py-1 pr-2 text-right font-medium">Cases</th>
-                <th className="py-1 pr-2 text-right font-medium text-red-700">Deaths</th>
-                <th className="py-1 pr-2 text-right font-medium">TPR %</th>
-                <th className="py-1 text-right font-medium">{isIndicator(metric) ? INDICATORS[metric].label : measureLabel(metric)}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topAreas.map((s) => {
-                const selected = level === "upazila" && geo.upazila?.key === s.key;
-                return (
-                  <tr key={s.key} onClick={() => drill(s.label)} className={`cursor-pointer border-t border-slate-100 hover:bg-sky-50 ${selected ? "bg-indigo-50" : ""}`}>
-                    <td className="truncate py-1 pr-2">
-                      <span className="inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: mapColor(s.value, breaks, metric) }} />{" "}
-                      {s.label}
-                      {!isReliable(s, metric) && <span className="ml-1 text-[10px] text-amber-700" title={`Fewer than ${MIN_TESTS_FOR_RANKING} tests`}>low tests</span>}
-                    </td>
-                    <td className="py-1 pr-2 text-right tabular-nums">{formatMeasure("cases", s.totals.cases)}</td>
-                    <td className={`py-1 pr-2 text-right tabular-nums ${s.totals.deaths ? "font-semibold text-red-700" : "text-slate-400"}`}>{formatMeasure("deaths", s.totals.deaths)}</td>
-                    <td className="py-1 pr-2 text-right tabular-nums">{formatMeasure("tpr", measureValue(s.totals, "tpr"))}</td>
-                    <td className="py-1 text-right font-semibold tabular-nums">{formatMeasure(metric, s.value)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ),
-    },
   };
+
+  // Signals listed at district level on the national view jump straight to that district's division.
+  function drillToDistrict(name: string) {
+    const key = canonicalGeoName(name);
+    for (const [divKey, list] of geoOptions.districts) {
+      const hit = list.find((d) => d.key === key);
+      const division = geoOptions.divisions.find((d) => d.key === divKey);
+      if (hit && division) {
+        setGeo({ division, district: hit, upazila: null });
+        return;
+      }
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -992,6 +1328,7 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
             {MAP_METRICS.map((m) => <option key={m} value={m}>{measureLabel(m)}</option>)}
           </select>
         </label>
+        <span className="hidden text-[11px] text-slate-400 lg:inline">Data through <b className="text-slate-600">{periodLabel(latestT)}</b></span>
         <button type="button" onClick={resetLayout} className="ml-auto rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-50">
           Reset layout
         </button>
@@ -1039,7 +1376,7 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
           actions={
             <>
               {filters}
-              {expanded === "map" || expanded === "areas" ? (
+              {expanded === "map" || expanded === "areas" || expanded === "trend" || expanded === "movers" || expanded === "calendar" ? (
                 <label className="flex items-center gap-1.5 text-xs text-slate-600">
                   Metric
                   <select value={metric} onChange={(e) => setMetric(e.target.value as MeasureKey)} className="rounded border border-slate-300 px-1.5 py-1 text-xs">
