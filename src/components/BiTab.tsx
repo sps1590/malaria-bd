@@ -1339,7 +1339,7 @@ export default function BiTab({ dataset }: { dataset: MisDataset }) {
           totals.personYears === 0 ? (
             <>API and ABER show “—” for this selection: population is available for the 77 at-risk upazilas of 13 districts (source: <b>{dataset.populationSource}</b>).</>
           ) : (
-            <>API and ABER use the population at risk from <b>{dataset.populationSource}</b> (BBS Census 2022, projected yearly).</>
+            <>API and ABER use the population at risk from <b>{dataset.populationSource}</b> (BBS Census 2022, projected yearly). API = cases ÷ population × 1,000 and is shown only for complete years — a part-year or a season shows “—”.</>
           )
         ) : (
           <>API and ABER need population — import the NSP quantification workbook with <code>python pipeline/import_quantification.py</code>.</>

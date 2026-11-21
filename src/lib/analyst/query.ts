@@ -112,6 +112,14 @@ ${q.limit ? `LIMIT ${ph(Math.min(Math.max(1, Math.floor(q.limit)), 5000), "int")
   return { text, params };
 }
 
+/**
+ * API is an annual indicator (cases ÷ population × 1,000): it exists only for whole years. True when [from, to] is a
+ * whole number of years with no month filter. For a year-by-year breakdown use apiYearComplete().
+ */
+export const wholeYears = (from: number, to: number, months?: number[]) => !months?.length && (to - from + 1) % 12 === 0;
+/** A calendar year (g) is a complete year inside the window. */
+export const apiYearComplete = (year: number, from: number, to: number, months?: number[]) => !months?.length && year * 12 >= from && year * 12 + 11 <= to;
+
 export interface AggRow {
   g: string | number | null;
   [metric: string]: string | number | null;
@@ -137,6 +145,14 @@ export async function runAgg(q: AggQuery, log: RunLog, note?: string): Promise<A
     for (const m of q.metrics) {
       const v = r[`m_${m.key}`];
       row[m.key] = v === null || v === undefined ? null : Number(v);
+    }
+    // API only exists for whole years — never show an annualised part-year or a season.
+    if (q.metrics.some((m) => m.key === "api")) {
+      const ok =
+        q.group === "year" ? apiYearComplete(Number(row.g), q.from, q.to, q.months)
+        : q.group === "month" || q.group === "quarter" || q.group === "calmonth" ? false
+        : wholeYears(q.from, q.to, q.months);
+      if (!ok) row.api = null;
     }
     return row;
   });

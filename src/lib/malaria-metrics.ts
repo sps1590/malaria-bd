@@ -119,10 +119,13 @@ export type Totals = Record<NumericKey, number> & {
   personYears: number;
   casesWithPop: number; // numerator restricted to rows that have a denominator
   testsWithPop: number;
+  /** First / last month (year × 12 + month − 1) of the rows that have a population — API needs whole years. */
+  tMin: number;
+  tMax: number;
 };
 
 export function emptyTotals(): Totals {
-  const t = { rows: 0, personYears: 0, casesWithPop: 0, testsWithPop: 0 } as Totals;
+  const t = { rows: 0, personYears: 0, casesWithPop: 0, testsWithPop: 0, tMin: Infinity, tMax: -Infinity } as Totals;
   for (const k of NUMERIC_KEYS) t[k] = 0;
   return t;
 }
@@ -136,6 +139,9 @@ export function addRecord(t: Totals, r: MisRecord): Totals {
     t.personYears += personYears(r.population, 1);
     t.casesWithPop += r.cases;
     t.testsWithPop += r.tests;
+    const m = r.year * 12 + r.month - 1;
+    if (m < t.tMin) t.tMin = m;
+    if (m > t.tMax) t.tMax = m;
   }
   return t;
 }
@@ -146,6 +152,8 @@ export function addTotals(into: Totals, from: Totals): Totals {
   into.personYears += from.personYears;
   into.casesWithPop += from.casesWithPop;
   into.testsWithPop += from.testsWithPop;
+  into.tMin = Math.min(into.tMin, from.tMin);
+  into.tMax = Math.max(into.tMax, from.tMax);
   return into;
 }
 
@@ -172,6 +180,14 @@ export function personYears(population: number, monthsObserved = 12): number {
   return (population * monthsObserved) / 12;
 }
 
+/**
+ * API is an annual indicator: it is only calculated for a period of whole years (12, 24… months), where it is
+ * simply confirmed cases ÷ population × 1,000. A part-year (e.g. Jan–Oct) or a season is not scaled up — it has no API.
+ */
+export function coversWholeYears(t: Pick<Totals, "tMin" | "tMax">): boolean {
+  return Number.isFinite(t.tMin) && (t.tMax - t.tMin + 1) % 12 === 0;
+}
+
 /** API — Annual Parasite Incidence: confirmed cases per 1,000 population per year. */
 export function annualParasiteIncidence(confirmedCases: number, populationYears: number): number | null {
   return populationYears > 0 ? (confirmedCases / populationYears) * 1000 : null;
@@ -196,7 +212,7 @@ export function percentOf(part: number, whole: number): number | null {
 }
 
 export const INDICATORS = {
-  api: { label: "API", unit: "per 1,000", formula: "Confirmed cases ÷ population-years × 1,000" },
+  api: { label: "API", unit: "per 1,000", formula: "Confirmed cases ÷ population × 1,000, for complete years only" },
   tpr: { label: "TPR", unit: "%", formula: "Confirmed cases ÷ persons tested × 100" },
   aber: { label: "ABER", unit: "%", formula: "Persons tested ÷ population-years × 100" },
   cfr: { label: "CFR", unit: "%", formula: "Deaths ÷ confirmed cases × 100" },
@@ -213,7 +229,7 @@ export function isIndicator(key: string): key is IndicatorKey {
 export function measureValue(t: Totals, key: MeasureKey): number | null {
   switch (key) {
     case "api":
-      return annualParasiteIncidence(t.casesWithPop, t.personYears);
+      return coversWholeYears(t) ? annualParasiteIncidence(t.casesWithPop, t.personYears) : null;
     case "tpr":
       return testPositivityRate(t.cases, t.tests);
     case "aber":

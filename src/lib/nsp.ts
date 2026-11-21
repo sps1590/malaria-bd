@@ -113,7 +113,8 @@ export async function nspComparison(input: { district?: string } = {}) {
       actual_cases: a?.cases ?? null,
       actual_deaths: a?.deaths ?? null,
       actual_tests: a?.tests ?? null,
-      api_actual: py > 0 ? round(((a?.cases_cov ?? 0) / py) * 1000, 2) : null,
+      // API is an annual indicator: only for a complete year (12 reported months), never scaled up from a part-year.
+      api_actual: py > 0 && (a?.months ?? 0) >= 12 ? round(((a?.cases_cov ?? 0) / py) * 1000, 2) : null,
       aber_actual_pct: py > 0 ? round(((a?.tests_cov ?? 0) / py) * 100, 2) : null,
       nsp_cases: round(nspCases.get(year), 0),
       nsp_api: round(nspApi.get(year), 2),
@@ -135,7 +136,7 @@ export async function nspComparison(input: { district?: string } = {}) {
     notes: {
       population: `Population: BBS Census 2022 upazila population, projected yearly (source: ${source}).`,
       targets: `NSP targets: intensified scenario in ${source} (actual to 2025, projected thereafter).`,
-      actual_api: "Actual API/ABER = cases (tests) in upazilas covered by the population file ÷ their population; hospital/CS-office cases in those districts are included.",
+      actual_api: "Actual API/ABER = cases (tests) in upazilas covered by the population file ÷ their population; hospital/CS-office cases in those districts are included. API is shown only for complete years.",
       expected: "Expected = cases already reported that year + model forecast for the remaining months (shown only when the whole year is covered).",
     },
     years: rows,

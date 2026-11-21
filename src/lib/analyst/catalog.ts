@@ -72,7 +72,7 @@ export const METRICS: MetricDef[] = [
     key: "api", label: "API (per 1,000)", unit: "rate", decimals: 2, needsPop: true,
     expr: "(1000.0 * sum(m.cases) FILTER (WHERE p.upazila_id IS NOT NULL) / nullif(sum(p.population) / 12.0, 0))::float8",
     terms: ["annual parasite incidence", "parasite incidence", "incidence rate", "cases per 1000", "per 1000 population", "per thousand", "incidence", "api"],
-    caveat: "API uses the population file, which covers the 77 at-risk upazilas of the 13 endemic districts only.",
+    caveat: "API = confirmed cases ÷ population × 1,000, calculated only for complete years (a part-year or season has no API). It uses the population file, which covers the 77 at-risk upazilas of the 13 endemic districts only.",
   },
   {
     key: "aber", label: "ABER (%)", unit: "rate", decimals: 2, needsPop: true,
@@ -127,7 +127,7 @@ export const GLOSSARY: GlossaryEntry[] = [
   { term: "Test positivity rate (TPR)", aliases: ["tpr", "test positivity", "positivity", "positivity rate", "spr", "slide positivity rate"],
     text: "**TPR = confirmed cases ÷ persons tested × 100.** It shows how many of the people tested turned out to have malaria. A high TPR means transmission is intense or testing is too narrow (only the sickest are tested); a very low TPR with heavy testing suggests low transmission. WHO suggests TPR below 5% as a sign of good control." },
   { term: "Annual parasite incidence (API)", aliases: ["api", "annual parasite incidence", "parasite incidence", "incidence rate"],
-    text: "**API = confirmed cases ÷ population at risk × 1,000 per year.** It is the standard malaria burden indicator and the basis of Bangladesh's risk classes and elimination targets. Here it is computed only where a population is known — the 77 at-risk upazilas of the 13 endemic districts (BBS Census 2022, projected yearly)." },
+    text: "**API = confirmed cases ÷ population at risk × 1,000, for a complete year.** It is calculated for whole years only (not for a part-year), for all areas together or for any one district or upazila. It is the standard malaria burden indicator and the basis of Bangladesh's risk classes and elimination targets. Here it is computed only where a population is known — the 77 at-risk upazilas of the 13 endemic districts (BBS Census 2022, projected yearly)." },
   { term: "Annual blood examination rate (ABER)", aliases: ["aber", "annual blood examination rate", "blood examination rate"],
     text: "**ABER = persons tested ÷ population × 100 per year.** It measures how hard surveillance is looking: low ABER can hide cases, so cases and TPR should always be read together with ABER." },
   { term: "Case fatality rate (CFR)", aliases: ["cfr", "case fatality", "case fatality rate", "fatality rate"],

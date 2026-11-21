@@ -144,6 +144,10 @@ export function planStats(p: Parsed, bounds: Bounds): StatsPlan {
 
   const metrics = keys.map(metricOf);
   const primary = metricOf(primaryKey);
+  if (keys.includes("api")) {
+    const partial = months?.length ? true : TIME_GROUPS.includes(group) ? group !== "year" || from % 12 !== 0 || (to + 1) % 12 !== 0 : len % 12 !== 0;
+    if (partial) assumptions.push(`API is an annual indicator (confirmed cases ÷ population × 1,000), so it is calculated only for complete years — it shows “—” for ${months?.length ? "a season or month filter" : "a part-year"}. Use a full year or the last 12 months.`);
+  }
 
   // rates from tiny denominators (1 case in 1 test = 100%) must not top a ranking
   const guards: StatsPlan["guards"] = [];
@@ -518,7 +522,9 @@ function presentRanking(plan: StatsPlan, b: Bundle, latestP: number): Presentati
   const more = matched > rows.length;
   const allZero = rows.every((x) => !x.cur);
   let text: string;
-  if (allZero && !wantChange && !plan.having.length) {
+  if (rows.every((x) => x.cur === null)) {
+    text = `**${plan.primary.label}** is not available for ${plan.timeLabel} — see the note below.`;
+  } else if (allZero && !wantChange && !plan.having.length) {
     const noun = sentence(plan.primary.label);
     text = plan.rankDir === "asc"
       ? `Many ${levelWord} in ${scope} tie at **0** ${noun} in ${plan.timeLabel} — for example ${joinList(rows.slice(0, 3).map((x) => nm(x.r.g)))}.`
@@ -568,6 +574,13 @@ function presentSeries(plan: StatsPlan, b: Bundle, latestP: number): Presentatio
   const pv = (r: AggRow) => num(r, P.key);
   const vals = rows.map(pv);
   const present = rows.filter((r) => pv(r) !== null);
+  if (!present.length) {
+    return {
+      text: withNotes(`**${P.label}** is not available for **${name}** in ${plan.timeLabel} — see the note below.`, plan),
+      suggestions: [`${P.label.replace(/ \(.*\)$/, "")} in ${name} for the last 12 months`],
+      empty: true,
+    };
+  }
   const peak = [...present].sort((a, c) => pv(c)! - pv(a)!)[0];
   const low = [...present].sort((a, c) => pv(a)! - pv(c)!)[0];
   const additive = isAdditive(P);

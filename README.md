@@ -134,7 +134,7 @@ python pipeline/import_quantification.py "C:/path/NSP-BAN quantification_1904202
   before email was set up, or whose send failed, are retried automatically on the next sync. `npm run alerts:send` emails the
   current death alerts immediately (`POST /api/alerts/send`, protected by `CRON_SECRET`); `ALERT_EMAIL_DRY_RUN=1` builds the
   message without sending, to test the wiring.
-- **API and ABER:** come from the imported population workbook (see above).
+- **API and ABER:** come from the imported population workbook (see above). **API = confirmed cases ÷ population at risk × 1,000, calculated only for complete years** (12, 24… months — a calendar year or the last 12 months, for all areas together or for one district/upazila). A part-year or a season shows “—” rather than a scaled-up number; ABER is unchanged.
 
 ## Deploy (live: https://malaria-bd.vercel.app)
 

@@ -9,10 +9,10 @@ import { AREA_GROUPS, metricOf, type MetricDef } from "./catalog";
 import { fmtMetric, labelG, pretty, sentence } from "./format";
 import type { Part } from "./handlers";
 import type { Parsed } from "./nlu";
-import { runAgg, type AggRow, type RunLog } from "./query";
+import { runAgg, wholeYears, type AggRow, type RunLog } from "./query";
 import type { Bounds } from "./store";
 import { fmtN, joinList } from "./text";
-import { labelRange, plabel } from "./time";
+import { labelRange, plabel, yearOfP } from "./time";
 import type { MapSpec, TableSpec } from "./types";
 import { cellFormat } from "./format";
 
@@ -91,6 +91,13 @@ export async function mapReply(p: Parsed, bounds: Bounds, lk: AreaLookup, log: R
 
   const scope = areas.length ? joinList(areas.map((a) => a.label)) : "Bangladesh";
   const levelWord = level === "upazila" ? "upazilas" : level === "district" ? "districts" : "divisions";
+
+  if (M.key === "api" && !wholeYears(from, to, p.time?.months)) {
+    return {
+      text: `API is an annual indicator (confirmed cases ÷ population × 1,000), so it is calculated only for complete years — not for ${period}. Try a full year or the last 12 months.`,
+      suggestions: [`Map of API in ${scope} for the last 12 months`, `Map of API in ${scope} for ${yearOfP(bounds.latestP) - 1}`],
+    };
+  }
 
   // ---- data (also tests / cases / deaths for the tooltips)
   const extra = ["cases", "deaths", "tests"].filter((k) => k !== M.key).map(metricOf);
